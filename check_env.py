@@ -29,7 +29,7 @@ def main() -> None:
         scores = probe(image).mean(dim=(2, 3))
     if scores.shape != (1, 6) or not torch.isfinite(scores).all().item():
         raise RuntimeError("CPU smoke check did not produce six finite scores")
-    print("CPU smoke check passed: OpenCV BGR → RGB → six PyTorch scores.")
+    print("CPU smoke check passed: OpenCV BGR to RGB, then six PyTorch scores.")
 
 
 if __name__ == "__main__":
