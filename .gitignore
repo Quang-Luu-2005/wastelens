@@ -1,0 +1,10 @@
+.venv/
+.env
+__pycache__/
+.ipynb_checkpoints/
+/data/raw/
+/data/trashnet/
+/models/
+*.pt
+*.pth
+*.onnx
