@@ -1,6 +1,6 @@
 # WasteLens · Lab03
 
-WasteLens is a six-class waste classification project for Digital Image & Video Processing Lab03. The classifier extends the Horse or Human MLP from Lab02 and trains on a fixed TrashNet split.
+WasteLens is a six-class waste classification project for Digital Image & Video Processing Lab03. The baseline classifier extends the Horse or Human MLP from Lab02; ImageNet-pretrained CNNs fine-tuned on the same fixed TrashNet split serve the application.
 
 ## Run locally
 
@@ -44,11 +44,28 @@ The affine checkpoint at epoch 460 scored 70.18% on unaugmented training images 
 
 The [input experiments](https://www.kaggle.com/code/luquang231/wastelens-lab03-input-ablation-20261110) and [original-size learning-rate experiments](https://www.kaggle.com/code/luquang231/wastelens-lab03-native-lr-20261110) contain their run histories and outputs. The Kaggle notebooks are private to the connected account.
 
+## Pretrained backbones
+
+`--architecture` selects `lab02-mlp` (default), `mobilenet_v3_large`, `efficientnet_b0` or `resnet50`. A backbone downloads its torchvision ImageNet weights, replaces the 1000-class layer with a six-class layer and fine-tunes the whole network.
+
+```powershell
+.\.venv\Scripts\python.exe -m wastelens.train --architecture mobilenet_v3_large --device cuda --epochs 20 --affine-augmentation --output outputs/mobilenet-20
+```
+
+| Setting | Lab02 MLP | Pretrained backbone |
+| --- | --- | --- |
+| Input | 64 × 64, RGB in [0, 1] | 224 × 224, RGB in [0, 1]; ImageNet mean/std applied inside the model |
+| Optimizer | Adam, constant learning rate 0.001 | AdamW, weight decay 0.01, cosine decay over the run |
+| Learning rate | 0.001 | 0.0001 for pretrained layers, 10× for the new output layer |
+| Parameters | 1,577,318 | 4,209,718 · 4,015,234 · 23,520,326 |
+
+`--learning-rate` and `--image-size` override the defaults. Images are resized to a square without cropping, so the app can classify crops of any aspect ratio with the same `preprocess()`. A saved checkpoint records its architecture, and `load_classifier()` rebuilds it without downloading weights.
+
 ## Train on Kaggle GPU
 
-Import [`notebooks/train_kaggle.ipynb`](notebooks/train_kaggle.ipynb), enable **Internet** and select **GPU T4 ×2** or **L4** under Accelerator. Run all cells using Kaggle's PyTorch environment. The notebook uses one GPU with automatic mixed precision and stops with an explicit error if CUDA cannot run.
+Import [`notebooks/train_kaggle.ipynb`](notebooks/train_kaggle.ipynb), enable **Internet** and select **GPU T4 ×2** or **L4** under Accelerator. Set `ARCHITECTURE` in the setup cell, then run all cells using Kaggle's PyTorch environment. The notebook uses one GPU with automatic mixed precision and stops with an explicit error if CUDA cannot run.
 
-The notebook downloads the versioned dataset, previews the six classes and trains for 30 epochs by default. Download the run directory under `/kaggle/working/wastelens-results/` after execution.
+The notebook downloads the versioned dataset, previews the six classes and fine-tunes MobileNetV3-Large for 20 epochs with affine augmentation by default. Download the run directory under `/kaggle/working/wastelens-results/` after execution.
 
 | Output | Use |
 | --- | --- |

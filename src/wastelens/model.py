@@ -1,14 +1,26 @@
-"""The Lab02 MLP adapted to six TrashNet classes."""
+"""Six-class TrashNet classifiers: the Lab02 MLP baseline and ImageNet-pretrained CNNs."""
 
 from pathlib import Path
 
 import torch
 from PIL import Image
 from torch import nn
+from torchvision import models
 from torchvision.transforms.functional import to_tensor
 
 
 ImageSize = int | tuple[int, int]
+
+# torchvision builder and weight enum for each supported pretrained backbone.
+BACKBONES = {
+    "mobilenet_v3_large": "MobileNet_V3_Large_Weights",
+    "efficientnet_b0": "EfficientNet_B0_Weights",
+    "resnet50": "ResNet50_Weights",
+}
+ARCHITECTURES = ("lab02-mlp", *BACKBONES)
+# Channel statistics of the ImageNet training set, which the pretrained weights expect.
+IMAGENET_MEAN = (0.485, 0.456, 0.406)
+IMAGENET_STD = (0.229, 0.224, 0.225)
 
 
 class Lab02MLP(nn.Module):
@@ -35,6 +47,50 @@ class Lab02MLP(nn.Module):
         return self.layers(images)
 
 
+class PretrainedClassifier(nn.Module):
+    """An ImageNet CNN whose 1000-class output layer is replaced by a six-class layer.
+
+    Inputs are RGB tensors in [0, 1], the same contract as the MLP. ImageNet normalization
+    happens inside the model so training, the app and exported models share one preprocess().
+    """
+
+    def __init__(self, backbone: str, image_size: int = 224, num_classes: int = 6, pretrained: bool = False):
+        super().__init__()
+        if backbone not in BACKBONES:
+            raise ValueError(f"Unknown backbone {backbone!r}; choose one of {sorted(BACKBONES)}")
+        self.image_size = image_size
+        weights = getattr(models, BACKBONES[backbone]).DEFAULT if pretrained else None
+        self.network = getattr(models, backbone)(weights=weights)
+        # ResNet names its output layer `fc`; MobileNetV3 and EfficientNet end `classifier` with it.
+        old_head = self.head()
+        new_head = nn.Linear(old_head.in_features, num_classes)
+        if hasattr(self.network, "fc"):
+            self.network.fc = new_head
+        else:
+            self.network.classifier[-1] = new_head
+        self.register_buffer("mean", torch.tensor(IMAGENET_MEAN).view(1, 3, 1, 1))
+        self.register_buffer("std", torch.tensor(IMAGENET_STD).view(1, 3, 1, 1))
+
+    def head(self) -> nn.Linear:
+        """Return the final linear layer, which is trained from scratch."""
+        return self.network.fc if hasattr(self.network, "fc") else self.network.classifier[-1]
+
+    def forward(self, images: torch.Tensor) -> torch.Tensor:
+        # Raw logits, as for the MLP; softmax is applied only at inference.
+        return self.network((images - self.mean) / self.std)
+
+
+def build_classifier(
+    architecture: str, image_size: ImageSize, num_classes: int = 6, pretrained: bool = False,
+) -> nn.Module:
+    """Create an untrained MLP, or a backbone with ImageNet weights when `pretrained` is set."""
+    if architecture == "lab02-mlp":
+        return Lab02MLP(image_size=image_size, num_classes=num_classes)
+    if not isinstance(image_size, int):
+        raise ValueError("Pretrained backbones take a square integer image size")
+    return PretrainedClassifier(architecture, image_size, num_classes, pretrained)
+
+
 def prepare_image(image: Image.Image, image_size: ImageSize) -> Image.Image:
     """An integer requests a square resize. A (width, height) pair requires the original size."""
     rgb = image.convert("RGB")
@@ -50,17 +106,20 @@ def preprocess(image: Image.Image, image_size: ImageSize) -> torch.Tensor:
     return to_tensor(prepare_image(image, image_size))
 
 
-def load_classifier(path: Path, device: torch.device | str = "cpu") -> tuple[Lab02MLP, list[str]]:
+def load_classifier(path: Path, device: torch.device | str = "cpu") -> tuple[nn.Module, list[str]]:
     """Restore the model and the manifest label order for inference."""
     checkpoint = torch.load(path, map_location="cpu", weights_only=True)
     classes = checkpoint["class_names"]
-    model = Lab02MLP(image_size=checkpoint["image_size"], num_classes=len(classes))
+    image_size = checkpoint["image_size"]
+    # Checkpoints written before backbones were added carry no architecture field.
+    architecture = checkpoint.get("architecture", "lab02-mlp")
+    model = build_classifier(architecture, tuple(image_size) if isinstance(image_size, list) else image_size, len(classes))
     model.load_state_dict(checkpoint["state_dict"])
     return model.to(device).eval(), classes
 
 
 @torch.inference_mode()
-def predict_probabilities(model: Lab02MLP, image: Image.Image) -> torch.Tensor:
+def predict_probabilities(model: nn.Module, image: Image.Image) -> torch.Tensor:
     """Return a CPU probability vector in the checkpoint's class order."""
     inputs = preprocess(image, model.image_size).unsqueeze(0)
     device = next(model.parameters()).device

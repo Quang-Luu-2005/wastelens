@@ -1,4 +1,4 @@
-"""Train and evaluate the Lab02-derived MLP on the fixed TrashNet split."""
+"""Train and evaluate a six-class classifier (Lab02 MLP or pretrained CNN) on the fixed TrashNet split."""
 
 import argparse
 import csv
@@ -13,7 +13,36 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from .data import TrashNetDataset, read_splits
-from .model import ImageSize, Lab02MLP, load_classifier
+from .model import ARCHITECTURES, ImageSize, PretrainedClassifier, build_classifier, load_classifier
+
+
+# Defaults per model family: the MLP keeps its Lab02 settings, the CNNs use ImageNet-sized inputs
+# and a smaller learning rate so fine-tuning does not destroy the pretrained features.
+DEFAULT_IMAGE_SIZE = {"lab02-mlp": 64}
+DEFAULT_LEARNING_RATE = {"lab02-mlp": 0.001}
+BACKBONE_IMAGE_SIZE = 224
+BACKBONE_LEARNING_RATE = 0.0001
+HEAD_LR_MULTIPLIER = 10  # The new six-class layer starts from random weights and can learn faster.
+WEIGHT_DECAY = 0.01
+
+
+def make_optimizer(model, learning_rate: float, epochs: int):
+    """Return the optimizer and an optional per-epoch learning-rate scheduler."""
+    if not isinstance(model, PretrainedClassifier):
+        # The Lab02 MLP is trained exactly as in the earlier experiments: Adam, constant rate.
+        return torch.optim.Adam(model.parameters(), lr=learning_rate), None
+    head = list(model.head().parameters())
+    head_ids = {id(parameter) for parameter in head}
+    backbone = [parameter for parameter in model.parameters() if id(parameter) not in head_ids]
+    optimizer = torch.optim.AdamW(
+        [
+            {"params": backbone, "lr": learning_rate},
+            {"params": head, "lr": learning_rate * HEAD_LR_MULTIPLIER},
+        ],
+        weight_decay=WEIGHT_DECAY,
+    )
+    # Cosine decay to zero over the run keeps late epochs stable for checkpoint selection.
+    return optimizer, torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
 
 def select_device(requested: str) -> torch.device:
@@ -115,16 +144,27 @@ def train(
     manifest: Path,
     output: Path,
     *,
+    architecture: str = "lab02-mlp",
     device: str = "auto",
     epochs: int = 30,
     batch_size: int = 64,
-    learning_rate: float = 0.001,
+    learning_rate: float | None = None,
+    image_size: int | None = None,
     seed: int = 42,
     native_resolution: bool = False,
     affine_augmentation: bool = False,
 ) -> dict:
-    if epochs < 1 or batch_size < 1 or learning_rate <= 0:
-        raise ValueError("Epochs, batch size and learning rate must be positive")
+    if architecture not in ARCHITECTURES:
+        raise ValueError(f"Unknown architecture {architecture!r}; choose one of {ARCHITECTURES}")
+    pretrained = architecture != "lab02-mlp"
+    if native_resolution and (pretrained or image_size is not None):
+        raise ValueError("Native resolution applies only to the MLP and replaces --image-size")
+    if learning_rate is None:
+        learning_rate = DEFAULT_LEARNING_RATE.get(architecture, BACKBONE_LEARNING_RATE)
+    if image_size is None:
+        image_size = DEFAULT_IMAGE_SIZE.get(architecture, BACKBONE_IMAGE_SIZE)
+    if epochs < 1 or batch_size < 1 or learning_rate <= 0 or image_size < 1:
+        raise ValueError("Epochs, batch size, learning rate and image size must be positive")
     if output.exists():
         raise FileExistsError(f"Choose a new output directory: {output}")
 
@@ -135,16 +175,18 @@ def train(
     print(f"PyTorch {torch.__version__} | {device_name} | CUDA AMP: {amp}", flush=True)
 
     splits, classes = read_splits(manifest)
-    image_size: ImageSize = 64
+    input_size: ImageSize = image_size
     if native_resolution:
         with Image.open(image_root / splits["train"][0][0]) as sample:
-            image_size = sample.size
+            input_size = sample.size
 
     def make_loader(split: str) -> DataLoader:
         training = split == "train"
         dataset = TrashNetDataset(
-            image_root, splits[split], image_size, augment=training,
+            image_root, splits[split], input_size, augment=training,
             affine_augmentation=training and affine_augmentation,
+            # CNN inputs are cached as bytes; the 64 x 64 MLP keeps its original float cache.
+            store_uint8=pretrained,
         )
         return DataLoader(
             dataset, batch_size=batch_size, shuffle=training, pin_memory=amp,
@@ -152,14 +194,19 @@ def train(
         )
 
     train_loader, val_loader = make_loader("train"), make_loader("val")
-    model = Lab02MLP(image_size=image_size, num_classes=len(classes)).to(device)
+    # Backbones download ImageNet weights here; reloading a checkpoint later needs no download.
+    model = build_classifier(architecture, input_size, len(classes), pretrained=pretrained).to(device)
+    parameters = sum(parameter.numel() for parameter in model.parameters())
+    print(f"{architecture}: {parameters:,} parameters | input {input_size} | learning rate {learning_rate}", flush=True)
     loss_fn = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    optimizer, scheduler = make_optimizer(model, learning_rate, epochs)
     scaler = torch.amp.GradScaler("cuda", enabled=amp)
     history = []
     best_f1, best_epoch = -1.0, 0
     for epoch in range(1, epochs + 1):
         train_loss = train_epoch(model, train_loader, optimizer, loss_fn, scaler, device)
+        if scheduler is not None:
+            scheduler.step()
         validation, _, _ = evaluate(model, val_loader, loss_fn, device, classes)
         val_f1 = validation["macro_f1"]
         history.append((epoch, train_loss, validation["loss"], validation["accuracy"], val_f1))
@@ -169,11 +216,13 @@ def train(
         print(f"Epoch {epoch:02d}/{epochs} | train loss {train_loss:.4f} | val macro-F1 {val_f1:.4f}", flush=True)
 
     metadata = {
-        "architecture": "lab02-mlp",
+        "architecture": architecture,
         "class_names": classes,
-        "image_size": image_size,
+        "image_size": input_size,
         "preprocessing": {
             "mode": "RGB", "resize": None if native_resolution else "bilinear", "pixel_scale": "0-1",
+            # Backbones subtract the ImageNet mean and divide by its std inside forward().
+            "normalization": "imagenet, inside model" if pretrained else None,
         },
     }
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -186,9 +235,10 @@ def train(
         test, predicted, confidence = evaluate(best_model, make_loader("test"), loss_fn, device, classes)
         metrics = {
             "device": str(device), "device_name": device_name, "amp": amp,
-            "torch_version": str(torch.__version__), "epochs": epochs, "seed": seed,
+            "torch_version": str(torch.__version__), "architecture": architecture,
+            "parameters": parameters, "epochs": epochs, "seed": seed,
             "batch_size": batch_size, "learning_rate": learning_rate,
-            "image_size": image_size, "affine_augmentation": affine_augmentation,
+            "image_size": input_size, "affine_augmentation": affine_augmentation,
             "manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
             "best_epoch": best_epoch, "best_val_macro_f1": best_f1, "test": test,
         }
@@ -217,10 +267,12 @@ def main() -> None:
     parser.add_argument("--image-root", type=Path, default=Path("data/trashnet"))
     parser.add_argument("--manifest", type=Path, default=Path("data/splits/trashnet.csv"))
     parser.add_argument("--output", type=Path, default=Path("outputs/lab02-mlp"))
+    parser.add_argument("--architecture", choices=ARCHITECTURES, default="lab02-mlp")
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--batch-size", type=int, default=64)
-    parser.add_argument("--learning-rate", type=float, default=0.001)
+    parser.add_argument("--learning-rate", type=float, help="default 0.001 for the MLP, 0.0001 for backbones")
+    parser.add_argument("--image-size", type=int, help="square input side; default 64 for the MLP, 224 for backbones")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--native-resolution", action="store_true", help="require the same original size for all images")
     parser.add_argument("--affine-augmentation", action="store_true", help="rotate and translate training images slightly")

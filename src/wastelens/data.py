@@ -35,23 +35,25 @@ def read_splits(manifest: Path) -> tuple[dict[str, list[tuple[str, int]]], list[
 class TrashNetDataset(Dataset):
     def __init__(
         self, image_root: Path, samples: list[tuple[str, int]], image_size: ImageSize,
-        augment: bool = False, affine_augmentation: bool = False,
+        augment: bool = False, affine_augmentation: bool = False, store_uint8: bool = False,
     ):
         self.labels = torch.tensor([label for _, label in samples], dtype=torch.long)
         self.augment = augment
-        native = isinstance(image_size, tuple)
+        # Native-size images always stay as bytes; larger square inputs may opt in.
+        as_bytes = store_uint8 or isinstance(image_size, tuple)
         self.affine = (
             RandomAffine(
                 degrees=10, translate=(0.0625, 0.0625),
-                interpolation=InterpolationMode.BILINEAR, fill=255 if native else 1.0,
+                interpolation=InterpolationMode.BILINEAR, fill=255 if as_bytes else 1.0,
             )
             if affine_augmentation else None
         )
-        # Cache native images as bytes to keep the training set near 1 GiB in RAM.
+        # Bytes take a quarter of the float32 memory: about 1 GiB for native images, 0.4 GiB at 224 x 224.
+        # image_batch_to_device() rescales them to [0, 1] on the device, matching preprocess().
         images = []
         for relative, _ in samples:
             with Image.open(image_root / relative) as image:
-                pixels = pil_to_tensor(prepare_image(image, image_size)) if native else preprocess(image, image_size)
+                pixels = pil_to_tensor(prepare_image(image, image_size)) if as_bytes else preprocess(image, image_size)
                 images.append(pixels)
         self.images = torch.stack(images)
 
