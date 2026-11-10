@@ -31,6 +31,19 @@ Two optional input experiments are available through the training command.
 
 Native-resolution training records the original `(width, height)` in the checkpoint and requires every input to have that size. It uses 75,501,926 model parameters, versus 1,577,318 with the 64 × 64 input. Future image uploads or webcam crops need a size-handling step to satisfy that MLP input contract. The affine option applies only to training, fills exposed borders with white and keeps validation and test preprocessing fixed.
 
+The Kaggle experiments below use seed 43, batch size 64, the same versioned split and validation macro-F1 for checkpoint selection. Original-size trials tested learning rates 0.001, 0.0001 and 0.00002 for 60 epochs. The table reports the original-size trial with the highest validation macro-F1.
+
+| Input and training | Epochs | Learning rate | Best validation macro-F1 | Test accuracy | Test macro-F1 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 64 × 64 with horizontal flips | 60 | 0.001 | 0.4505 | 52.79% | 0.4963 |
+| Original 512 × 384 with horizontal flips | 60 | 0.00002 | 0.4056 | 49.87% | 0.4150 |
+| 64 × 64 with horizontal flips | 600 | 0.001 | 0.5801 | 58.62% | 0.5727 |
+| 64 × 64 with flips, rotation and translation | 600 | 0.001 | 0.5740 | 59.95% | 0.5791 |
+
+The affine checkpoint at epoch 460 scored 70.18% on unaugmented training images and 58.95% on validation, a gap of 11.23 percentage points. The baseline checkpoint scored 86.17% and 59.47%, a gap of 26.70 points. The smaller gap comes mainly from lower training accuracy. The baseline still leads on the validation selection metric, while the affine trial has a slightly higher test score. These single-seed experiments are exploratory comparisons.
+
+The [input experiments](https://www.kaggle.com/code/luquang231/wastelens-lab03-input-ablation-20261110) and [original-size learning-rate experiments](https://www.kaggle.com/code/luquang231/wastelens-lab03-native-lr-20261110) contain their run histories and outputs. The Kaggle notebooks are private to the connected account.
+
 ## Train on Kaggle GPU
 
 Import [`notebooks/train_kaggle.ipynb`](notebooks/train_kaggle.ipynb), enable **Internet** and select **GPU T4 ×2** or **L4** under Accelerator. Run all cells using Kaggle's PyTorch environment. The notebook uses one GPU with automatic mixed precision and stops with an explicit error if CUDA cannot run.
