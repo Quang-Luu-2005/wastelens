@@ -5,6 +5,8 @@ __pycache__/
 /data/raw/
 /data/trashnet/
 /models/
+/outputs/
+*.egg-info/
 *.pt
 *.pth
 *.onnx

@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wastelens"
+version = "0.1.0"
+description = "Waste classification for Digital Image & Video Processing Lab03"
+requires-python = ">=3.11"
+
+[tool.setuptools.packages.find]
+where = ["src"]
