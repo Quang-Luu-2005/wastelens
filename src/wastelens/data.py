@@ -6,8 +6,10 @@ from pathlib import Path
 import torch
 from PIL import Image
 from torch.utils.data import Dataset
+from torchvision.transforms import InterpolationMode, RandomAffine
+from torchvision.transforms.functional import pil_to_tensor
 
-from .model import preprocess
+from .model import ImageSize, prepare_image, preprocess
 
 
 def read_splits(manifest: Path) -> tuple[dict[str, list[tuple[str, int]]], list[str]]:
@@ -31,14 +33,26 @@ def read_splits(manifest: Path) -> tuple[dict[str, list[tuple[str, int]]], list[
 
 
 class TrashNetDataset(Dataset):
-    def __init__(self, image_root: Path, samples: list[tuple[str, int]], image_size: int, augment: bool = False):
+    def __init__(
+        self, image_root: Path, samples: list[tuple[str, int]], image_size: ImageSize,
+        augment: bool = False, affine_augmentation: bool = False,
+    ):
         self.labels = torch.tensor([label for _, label in samples], dtype=torch.long)
         self.augment = augment
-        # Cache the small resized inputs, as in Lab02, to avoid decoding each epoch.
+        native = isinstance(image_size, tuple)
+        self.affine = (
+            RandomAffine(
+                degrees=10, translate=(0.0625, 0.0625),
+                interpolation=InterpolationMode.BILINEAR, fill=255 if native else 1.0,
+            )
+            if affine_augmentation else None
+        )
+        # Cache native images as bytes to keep the training set near 1 GiB in RAM.
         images = []
         for relative, _ in samples:
             with Image.open(image_root / relative) as image:
-                images.append(preprocess(image, image_size))
+                pixels = pil_to_tensor(prepare_image(image, image_size)) if native else preprocess(image, image_size)
+                images.append(pixels)
         self.images = torch.stack(images)
 
     def __len__(self) -> int:
@@ -48,4 +62,6 @@ class TrashNetDataset(Dataset):
         image = self.images[index]
         if self.augment and torch.rand(()).item() < 0.5:
             image = image.flip(-1)
+        if self.affine is not None:
+            image = self.affine(image)
         return image, self.labels[index]

@@ -8,13 +8,17 @@ from torch import nn
 from torchvision.transforms.functional import to_tensor
 
 
+ImageSize = int | tuple[int, int]
+
+
 class Lab02MLP(nn.Module):
-    def __init__(self, image_size: int = 64, num_classes: int = 6):
+    def __init__(self, image_size: ImageSize = 64, num_classes: int = 6):
         super().__init__()
         self.image_size = image_size
+        width, height = (image_size, image_size) if isinstance(image_size, int) else image_size
         self.layers = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(3 * image_size**2, 128),
+            nn.Linear(3 * width * height, 128),
             nn.ReLU(),
             nn.Linear(128, 32),
             nn.ReLU(),
@@ -31,10 +35,19 @@ class Lab02MLP(nn.Module):
         return self.layers(images)
 
 
-def preprocess(image: Image.Image, image_size: int) -> torch.Tensor:
-    """Convert a PIL image to RGB, resize as in Lab02 and scale to [0, 1]."""
-    resized = image.convert("RGB").resize((image_size, image_size), Image.Resampling.BILINEAR)
-    return to_tensor(resized)
+def prepare_image(image: Image.Image, image_size: ImageSize) -> Image.Image:
+    """An integer requests a square resize. A (width, height) pair requires the original size."""
+    rgb = image.convert("RGB")
+    if isinstance(image_size, int):
+        return rgb.resize((image_size, image_size), Image.Resampling.BILINEAR)
+    if rgb.size != image_size:
+        raise ValueError(f"Native-resolution MLP expects {image_size} (width, height), got {rgb.size}")
+    return rgb
+
+
+def preprocess(image: Image.Image, image_size: ImageSize) -> torch.Tensor:
+    """Prepare the classifier input and scale RGB values to [0, 1]."""
+    return to_tensor(prepare_image(image, image_size))
 
 
 def load_classifier(path: Path, device: torch.device | str = "cpu") -> tuple[Lab02MLP, list[str]]:

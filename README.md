@@ -20,6 +20,17 @@ The CPU check exercises OpenCV BGR-to-RGB conversion and a PyTorch forward pass 
 
 The training command writes to `outputs/lab02-mlp/`. For a quick end-to-end run, pass `--epochs 1 --output outputs/smoke`. Give each repeat run a new `--output` directory. With a CUDA build of PyTorch, use `--device cuda` to require GPU training.
 
+Two optional input experiments are available through the training command.
+
+```powershell
+# Rotate training images within 10 degrees and translate by at most 6.25%.
+.\.venv\Scripts\python.exe -m wastelens.train --device cuda --epochs 600 --seed 43 --affine-augmentation --output outputs/affine-600
+# Use each original TrashNet image at 512 x 384 pixels.
+.\.venv\Scripts\python.exe -m wastelens.train --device cuda --epochs 60 --seed 43 --native-resolution --output outputs/native-60
+```
+
+Native-resolution training records the original `(width, height)` in the checkpoint and requires every input to have that size. It uses 75,501,926 model parameters, versus 1,577,318 with the 64 × 64 input. Future image uploads or webcam crops need a size-handling step to satisfy that MLP input contract. The affine option applies only to training, fills exposed borders with white and keeps validation and test preprocessing fixed.
+
 ## Train on Kaggle GPU
 
 Import [`notebooks/train_kaggle.ipynb`](notebooks/train_kaggle.ipynb), enable **Internet** and select **GPU T4 ×2** or **L4** under Accelerator. Run all cells using Kaggle's PyTorch environment. The notebook uses one GPU with automatic mixed precision and stops with an explicit error if CUDA cannot run.

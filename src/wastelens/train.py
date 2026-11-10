@@ -8,11 +8,12 @@ import tempfile
 from pathlib import Path
 
 import torch
+from PIL import Image
 from torch import nn
 from torch.utils.data import DataLoader
 
 from .data import TrashNetDataset, read_splits
-from .model import Lab02MLP, load_classifier
+from .model import ImageSize, Lab02MLP, load_classifier
 
 
 def select_device(requested: str) -> torch.device:
@@ -28,11 +29,18 @@ def select_device(requested: str) -> torch.device:
     return torch.device(requested)
 
 
+def image_batch_to_device(images: torch.Tensor, device: torch.device | str) -> torch.Tensor:
+    images = images.to(device, non_blocking=True)
+    if images.dtype == torch.uint8:
+        return images.float().div_(255)
+    return images
+
+
 def train_epoch(model, loader, optimizer, loss_fn, scaler, device) -> float:
     model.train()
     total_loss = 0.0
     for images, labels in loader:
-        images = images.to(device, non_blocking=True)
+        images = image_batch_to_device(images, device)
         labels = labels.to(device, non_blocking=True)
         optimizer.zero_grad(set_to_none=True)
         with torch.autocast(device.type, dtype=torch.float16, enabled=scaler.is_enabled()):
@@ -73,7 +81,7 @@ def evaluate(model, loader, loss_fn, device, classes) -> tuple[dict, torch.Tenso
     total_loss = 0.0
     true_labels, predictions, confidences = [], [], []
     for images, labels in loader:
-        scores = model(images.to(device, non_blocking=True))
+        scores = model(image_batch_to_device(images, device))
         loss = loss_fn(scores, labels.to(device, non_blocking=True))
         total_loss += loss.item() * len(labels)
         confidence, predicted = scores.softmax(dim=1).max(dim=1)
@@ -112,6 +120,8 @@ def train(
     batch_size: int = 64,
     learning_rate: float = 0.001,
     seed: int = 42,
+    native_resolution: bool = False,
+    affine_augmentation: bool = False,
 ) -> dict:
     if epochs < 1 or batch_size < 1 or learning_rate <= 0:
         raise ValueError("Epochs, batch size and learning rate must be positive")
@@ -124,12 +134,18 @@ def train(
     device_name = torch.cuda.get_device_name(device) if amp else "CPU"
     print(f"PyTorch {torch.__version__} | {device_name} | CUDA AMP: {amp}", flush=True)
 
-    image_size = 64
     splits, classes = read_splits(manifest)
+    image_size: ImageSize = 64
+    if native_resolution:
+        with Image.open(image_root / splits["train"][0][0]) as sample:
+            image_size = sample.size
 
     def make_loader(split: str) -> DataLoader:
         training = split == "train"
-        dataset = TrashNetDataset(image_root, splits[split], image_size, augment=training)
+        dataset = TrashNetDataset(
+            image_root, splits[split], image_size, augment=training,
+            affine_augmentation=training and affine_augmentation,
+        )
         return DataLoader(
             dataset, batch_size=batch_size, shuffle=training, pin_memory=amp,
             generator=torch.Generator().manual_seed(seed),
@@ -156,7 +172,9 @@ def train(
         "architecture": "lab02-mlp",
         "class_names": classes,
         "image_size": image_size,
-        "preprocessing": {"mode": "RGB", "resize": "bilinear", "pixel_scale": "0-1"},
+        "preprocessing": {
+            "mode": "RGB", "resize": None if native_resolution else "bilinear", "pixel_scale": "0-1",
+        },
     }
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".wastelens-", dir=output.parent) as temporary:
@@ -170,6 +188,7 @@ def train(
             "device": str(device), "device_name": device_name, "amp": amp,
             "torch_version": str(torch.__version__), "epochs": epochs, "seed": seed,
             "batch_size": batch_size, "learning_rate": learning_rate,
+            "image_size": image_size, "affine_augmentation": affine_augmentation,
             "manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
             "best_epoch": best_epoch, "best_val_macro_f1": best_f1, "test": test,
         }
@@ -203,6 +222,8 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--learning-rate", type=float, default=0.001)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--native-resolution", action="store_true", help="require the same original size for all images")
+    parser.add_argument("--affine-augmentation", action="store_true", help="rotate and translate training images slightly")
     args = parser.parse_args()
     train(**vars(args))
 
