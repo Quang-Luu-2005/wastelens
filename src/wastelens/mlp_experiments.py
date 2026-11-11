@@ -1,8 +1,9 @@
 """Controlled, from-scratch Lab02 MLP ablations; select on validation before test.
 
-Run one seed per GPU using the accompanying Kaggle notebook. Every configuration
-uses RGB 64x64, the fixed split, Xavier initialization, batch size 64, and random
-horizontal flips only. All candidates receive the same maximum epoch budget.
+Run one seed per GPU using the accompanying Kaggle notebook. Configurations use
+the fixed split, Xavier initialization, batch size 64 and random horizontal
+flips only. Descriptor resolution is explicit; all candidates receive the same
+maximum epoch budget.
 """
 
 import argparse
@@ -19,7 +20,7 @@ from torch import nn
 from torch.nn import functional as F
 
 from .data import TrashNetDataset, read_splits
-from .features import PIXEL_FEATURES, feature_dimension, image_descriptor
+from .features import PIXEL_FEATURES, descriptor_image, feature_dimension, image_descriptor
 from .model import MLPVariant, load_classifier
 from .train import classification_metrics, write_csv, write_json
 
@@ -76,7 +77,21 @@ ROUND2 = (
     replace(CONTROL, name="hog_hsv", parent="baseline", representation="hog_hsv", normalization="feature"),
     replace(CONTROL, name="hybrid", parent="baseline", representation="hybrid", normalization="feature"),
 )
-SUITES = {"round1": EXPERIMENTS, "round2": ROUND2}
+DESCRIPTOR = replace(CONTROL, name="baseline", parent=None, representation="hog_hsv", normalization="feature")
+HIGHRES = replace(DESCRIPTOR, name="highres", parent="baseline", representation="hog_hsv128")
+ROUND3 = (
+    DESCRIPTOR,
+    replace(DESCRIPTOR, name="hog_only", parent="baseline", representation="hog_only"),
+    replace(DESCRIPTOR, name="hsv_only", parent="baseline", representation="hsv_only"),
+    HIGHRES,
+    replace(DESCRIPTOR, name="extra_lab", parent="baseline", representation="hog_hsv_lab"),
+    replace(DESCRIPTOR, name="foreground_crop", parent="baseline", representation="crop_hog_hsv"),
+    replace(HIGHRES, name="crop_highres", parent="highres", representation="crop_hog_hsv128"),
+    replace(DESCRIPTOR, name="gelu", parent="baseline", activation="gelu"),
+    replace(DESCRIPTOR, name="light_dropout", parent="baseline", dropout=0.10),
+    replace(DESCRIPTOR, name="adamw_cosine", parent="baseline", optimizer="adamw", weight_decay=1e-4, cosine=True),
+)
+SUITES = {"round1": EXPERIMENTS, "round2": ROUND2, "round3": ROUND3}
 
 
 class FocalLoss(nn.Module):
@@ -132,6 +147,24 @@ def represent(images: torch.Tensor, representation: str) -> torch.Tensor:
     return torch.from_numpy(features).to(images.device)
 
 
+def cached_descriptors(image_root, samples, representation, device, flipped=False):
+    """Read original files directly so 128px descriptors retain genuine image detail."""
+    import numpy as np
+    from PIL import Image, ImageOps
+
+    values = []
+    for relative, _ in samples:
+        with Image.open(image_root / relative) as image:
+            # Crop/resize once; then flip the prepared image, as in earlier rounds.
+            prepared = descriptor_image(image, representation)
+        if flipped:
+            prepared = ImageOps.mirror(prepared)
+        # The crop was already applied. A second crop would change inference parity.
+        processed_representation = representation.removeprefix("crop_")
+        values.append(image_descriptor(prepared, processed_representation))
+    return torch.from_numpy(np.stack(values)).to(device)
+
+
 @torch.no_grad()
 def fit_normalization(model: MLPVariant, images: torch.Tensor, experiment: Experiment):
     """Fit immutable preprocessing buffers using only the unaugmented training split."""
@@ -176,16 +209,26 @@ def run_seed(image_root: Path, manifest: Path, output: Path, seed: int, epochs: 
     representations = {"pixels": (raw_train_x, None, raw_val_x)}
     for experiment in experiments:
         representation = experiment.representation
+        features_started = time.perf_counter()
+        extraction_cached = representation in representations
         if representation not in representations:
             # Recompute descriptors on flipped images: reversing descriptor coordinates is incorrect.
-            representations[representation] = (represent(raw_train_x, representation),
+            if suite == "round3":
+                representations[representation] = (
+                    cached_descriptors(image_root, splits["train"], representation, device),
+                    cached_descriptors(image_root, splits["train"], representation, device, flipped=True),
+                    cached_descriptors(image_root, splits["val"], representation, device))
+            else:
+                representations[representation] = (represent(raw_train_x, representation),
                                                 represent(raw_train_x.flip(-1), representation),
                                                 represent(raw_val_x, representation))
         train_x, flipped_x, val_x = representations[representation]
+        extraction_seconds = time.perf_counter() - features_started
         directory = output / experiment.name
         directory.mkdir()
         torch.manual_seed(seed)
-        model = MLPVariant(num_classes=len(classes), **experiment.model_config()).to(device)
+        image_size = 128 if representation.endswith("128") else 64
+        model = MLPVariant(image_size=image_size, num_classes=len(classes), **experiment.model_config()).to(device)
         fit_normalization(model, train_x, experiment)
         loss_fn = make_loss(experiment.loss, train_y, len(classes)).to(device)
         optimizer_type = torch.optim.AdamW if experiment.optimizer == "adamw" else torch.optim.Adam
@@ -232,7 +275,7 @@ def run_seed(image_root: Path, manifest: Path, output: Path, seed: int, epochs: 
             torch.cuda.synchronize(device)
         elapsed = time.perf_counter() - started
         checkpoint = {
-            "architecture": "lab02-mlp-variant", "image_size": 64, "class_names": classes,
+            "architecture": "lab02-mlp-variant", "image_size": image_size, "class_names": classes,
             "mlp_config": experiment.model_config(), "state_dict": best_state,
             "feature_representation": experiment.representation,
         }
@@ -244,7 +287,9 @@ def run_seed(image_root: Path, manifest: Path, output: Path, seed: int, epochs: 
         assert (validation["macro_f1"], validation["accuracy"]) == best_key
         result = {
             "experiment": asdict(experiment), "suite": suite, "seed": seed, "epochs": epochs, "batch_size": batch_size,
-            "learning_rate": 0.001, "image_size": 64, "augmentation": "horizontal_flip_p0.5",
+            "learning_rate": 0.001, "image_size": image_size, "augmentation": "horizontal_flip_p0.5",
+            "descriptor_image_size": image_size,
+            "feature_extraction_seconds": extraction_seconds, "feature_cache_reused": extraction_cached,
             "precision": "float32", "parameters": sum(parameter.numel() for parameter in model.parameters()),
             "training_seconds": elapsed, "best_epoch": best_epoch,
             "manifest_sha256": manifest_hash, "train": train_metrics, "validation": validation,
@@ -297,7 +342,9 @@ def summarize(image_root: Path, manifest: Path, output: Path, seeds: list[int], 
             directory = output / f"seed-{seed}" / name
             model, restored_classes = load_classifier(directory / "best.pt", device)
             assert restored_classes == classes
-            inputs = represent(test_x, getattr(model, "feature_representation", "pixels"))
+            representation = getattr(model, "feature_representation", "pixels")
+            inputs = (cached_descriptors(image_root, splits["test"], representation, device) if suite == "round3"
+                      else represent(test_x, representation))
             metrics, predictions, confidence = measure(model, inputs, test_y, classes)
             write_json(directory / "test-metrics.json", metrics)
             write_csv(directory / "test-predictions.csv", ("path", "actual", "predicted", "confidence"),

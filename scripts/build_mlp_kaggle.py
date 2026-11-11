@@ -20,9 +20,9 @@ def code(source):
 
 
 def build(staging: Path, suite: str = "round1"):
-    run_name = "wastelens-mlp-round2" if suite == "round2" else "wastelens-mlp-ablation"
+    run_name = f"wastelens-mlp-{suite}" if suite != "round1" else "wastelens-mlp-ablation"
     slug = run_name + "-20261111"
-    notebook_name = "mlp_ablation_round2_kaggle.ipynb" if suite == "round2" else "mlp_ablation_kaggle.ipynb"
+    notebook_name = f"mlp_ablation_{suite}_kaggle.ipynb" if suite != "round1" else "mlp_ablation_kaggle.ipynb"
     files = sorted((ROOT / "src/wastelens").glob("*.py")) + [
         ROOT / "scripts/prepare_trashnet.py", ROOT / "data/splits/trashnet.csv",
         ROOT / "data/splits/trashnet-summary.json",
@@ -40,7 +40,7 @@ def build(staging: Path, suite: str = "round1"):
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     cells = [{"cell_type": "markdown", "metadata": {}, "source":
               "# Lab02 MLP: controlled from-scratch ablations\n\n"
-              f"Suite {suite}, paired seeds 42/43, 600 epochs, source images RGB 64x64. "
+              f"Suite {suite}, paired seeds 42/43, 600 epochs; descriptor resolution is explicit in the configuration. "
               "No pretrained weights. Select the configuration by mean validation macro-F1 before test. "
               "The test split has been inspected in prior project experiments. "
               "The embedded source snapshot, rather than a mutable Git branch, defines this run.\n"}]
@@ -140,6 +140,6 @@ def build(staging: Path, suite: str = "round1"):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--staging", type=Path, required=True)
-    parser.add_argument("--suite", choices=("round1", "round2"), default="round1")
+    parser.add_argument("--suite", choices=("round1", "round2", "round3"), default="round1")
     args = parser.parse_args()
     build(args.staging, args.suite)

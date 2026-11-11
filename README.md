@@ -113,6 +113,15 @@ normalization buffers are saved with the checkpoint. See the
 [round-two protocol](docs/mlp-round2.md) and
 [Kaggle notebook](notebooks/mlp_ablation_round2_kaggle.ipynb).
 
+The [third round](reports/mlp-round3-20261111.md) selects HOG + HSV + Lab with
+the same from-scratch MLP: **78.91% mean test accuracy**, up **1.59 percentage
+points** from 77.32%. Both seeds improve in accuracy; test macro-F1 rises only
+from **0.7741 to 0.7774**, with lower F1 for the small `trash` class. The model
+has 2,772 inputs and 729,318 parameters. HSV-only is nearly tied on validation
+macro-F1 with 148,710 parameters; the selection is exploratory, not a claim of
+statistical superiority. See the [protocol](docs/mlp-round3.md) and
+[notebook](notebooks/mlp_ablation_round3_kaggle.ipynb).
+
 ## TrashNet split
 
 The [upstream TrashNet release](https://github.com/garythung/trashnet/tree/6fa2b878c6c1b4304b91109070ce0edf9279bb31) by Gary Thung and Mindy Yang contains 2,527 images at 512 × 384 pixels. The photographs use a white background. The small `trash` class and the controlled background both matter when interpreting performance on webcam footage.
