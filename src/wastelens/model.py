@@ -47,6 +47,20 @@ class Lab02MLP(nn.Module):
         return self.layers(images)
 
 
+class DenseBlock(nn.Module):
+    """Matched two-layer dense block, optionally adding its input to the output."""
+
+    def __init__(self, width: int, dropout: float, residual: bool):
+        super().__init__()
+        self.residual = residual
+        self.branch = nn.Sequential(nn.LayerNorm(width), nn.Linear(width, width), nn.GELU(),
+                                    nn.Dropout(dropout), nn.Linear(width, width), nn.Dropout(dropout))
+
+    def forward(self, inputs):
+        branch = self.branch(inputs)
+        return inputs + branch if self.residual else branch
+
+
 class MLPVariant(nn.Module):
     """Lab02-style dense network, trained from scratch with explicit ablation settings."""
 
@@ -54,29 +68,45 @@ class MLPVariant(nn.Module):
         self, image_size: int = 64, num_classes: int = 6,
         hidden_sizes: tuple[int, ...] = (128, 32), dropout: float = 0.0,
         layer_norm: bool = False,
+        activation: str = "relu", input_features: int | None = None,
+        normalize_input: bool = False, block_depth: int = 0, residual: bool = False,
     ):
         super().__init__()
         if not hidden_sizes or any(size < 1 for size in hidden_sizes) or not 0 <= dropout < 1:
             raise ValueError("Expected positive hidden sizes and dropout in [0, 1)")
         self.image_size = image_size
+        if activation not in {"relu", "gelu"} or block_depth < 0:
+            raise ValueError("Expected relu/gelu and a nonnegative block depth")
+        input_features = input_features or 3 * image_size * image_size
+        # Conditional buffers preserve compatibility with the round-one checkpoints.
+        self.register_buffer("input_mean", torch.zeros(1, input_features) if normalize_input else None)
+        self.register_buffer("input_std", torch.ones(1, input_features) if normalize_input else None)
         layers = [nn.Flatten()]
-        previous = 3 * image_size * image_size
-        for size in hidden_sizes:
-            layers.append(nn.Linear(previous, size))
-            if layer_norm:
-                layers.append(nn.LayerNorm(size))
-            layers.append(nn.ReLU())
-            if dropout:
-                layers.append(nn.Dropout(dropout))
-            previous = size
-        layers.append(nn.Linear(previous, num_classes))
+        if block_depth:
+            width = hidden_sizes[0]
+            layers += [nn.Linear(input_features, width), nn.LayerNorm(width), nn.GELU()]
+            layers += [DenseBlock(width, dropout, residual) for _ in range(block_depth)]
+            layers += [nn.LayerNorm(width), nn.Linear(width, num_classes)]
+        else:
+            previous = input_features
+            for size in hidden_sizes:
+                layers.append(nn.Linear(previous, size))
+                if layer_norm:
+                    layers.append(nn.LayerNorm(size))
+                layers.append(nn.GELU() if activation == "gelu" else nn.ReLU())
+                if dropout:
+                    layers.append(nn.Dropout(dropout))
+                previous = size
+            layers.append(nn.Linear(previous, num_classes))
         self.layers = nn.Sequential(*layers)
-        for layer in self.layers:
+        for layer in self.modules():
             if isinstance(layer, nn.Linear):
                 nn.init.xavier_normal_(layer.weight)
                 nn.init.zeros_(layer.bias)
 
     def forward(self, images: torch.Tensor) -> torch.Tensor:
+        if self.input_mean is not None:
+            images = (images.flatten(1) - self.input_mean) / self.input_std
         return self.layers(images)
 
 
@@ -148,6 +178,7 @@ def load_classifier(path: Path, device: torch.device | str = "cpu") -> tuple[nn.
     architecture = checkpoint.get("architecture", "lab02-mlp")
     if architecture == "lab02-mlp-variant":
         model = MLPVariant(image_size=image_size, num_classes=len(classes), **checkpoint["mlp_config"])
+        model.feature_representation = checkpoint.get("feature_representation", "pixels")
     else:
         model = build_classifier(architecture, tuple(image_size) if isinstance(image_size, list) else image_size, len(classes))
     model.load_state_dict(checkpoint["state_dict"])
@@ -157,6 +188,11 @@ def load_classifier(path: Path, device: torch.device | str = "cpu") -> tuple[nn.
 @torch.inference_mode()
 def predict_probabilities(model: nn.Module, image: Image.Image) -> torch.Tensor:
     """Return a CPU probability vector in the checkpoint's class order."""
-    inputs = preprocess(image, model.image_size).unsqueeze(0)
+    representation = getattr(model, "feature_representation", "pixels")
+    if representation != "pixels":
+        from .features import image_descriptor
+        inputs = torch.from_numpy(image_descriptor(image, representation)).unsqueeze(0)
+    else:
+        inputs = preprocess(image, model.image_size).unsqueeze(0)
     device = next(model.parameters()).device
     return model(inputs.to(device)).softmax(dim=1).squeeze(0).cpu()

@@ -19,6 +19,7 @@ from torch import nn
 from torch.nn import functional as F
 
 from .data import TrashNetDataset, read_splits
+from .features import PIXEL_FEATURES, feature_dimension, image_descriptor
 from .model import MLPVariant, load_classifier
 from .train import classification_metrics, write_csv, write_json
 
@@ -34,9 +35,17 @@ class Experiment:
     weight_decay: float = 0.0
     cosine: bool = False
     loss: str = "ce"
+    activation: str = "relu"
+    normalization: str = "none"
+    representation: str = "pixels"
+    block_depth: int = 0
+    residual: bool = False
 
     def model_config(self) -> dict:
-        return {key: asdict(self)[key] for key in ("hidden_sizes", "dropout", "layer_norm")}
+        return {**{key: asdict(self)[key] for key in
+                   ("hidden_sizes", "dropout", "layer_norm", "activation", "block_depth", "residual")},
+                "normalize_input": self.normalization != "none",
+                "input_features": feature_dimension(self.representation)}
 
 
 BASE = Experiment("baseline", None)
@@ -51,6 +60,23 @@ EXPERIMENTS = (
     replace(REG, name="weighted_ce", parent="adamw_cosine", loss="weighted_ce"),
     replace(REG, name="focal", parent="adamw_cosine", loss="focal"),
 )
+
+# Round two starts from the actual round-one winner, not the original weak MLP.
+CONTROL = replace(NORM, name="baseline", parent=None)
+CHANNEL = replace(CONTROL, name="channel_std", parent="baseline", normalization="channel")
+PIXEL = replace(CONTROL, name="pixel_std", parent="baseline", normalization="feature")
+GELU = replace(CHANNEL, name="gelu", parent="channel_std", activation="gelu")
+LIGHT = replace(GELU, name="light_dropout", parent="gelu", dropout=0.10)
+PLAIN = replace(LIGHT, name="plain_blocks", parent="light_dropout", hidden_sizes=(256,), block_depth=2)
+ROUND2 = (
+    CONTROL,
+    replace(CONTROL, name="no_dropout", parent="baseline", dropout=0.0),
+    CHANNEL, PIXEL, GELU, LIGHT, PLAIN,
+    replace(PLAIN, name="residual_blocks", parent="plain_blocks", residual=True),
+    replace(CONTROL, name="hog_hsv", parent="baseline", representation="hog_hsv", normalization="feature"),
+    replace(CONTROL, name="hybrid", parent="baseline", representation="hybrid", normalization="feature"),
+)
+SUITES = {"round1": EXPERIMENTS, "round2": ROUND2}
 
 
 class FocalLoss(nn.Module):
@@ -96,8 +122,40 @@ def cached_split(image_root, samples, device):
     return dataset.images.to(device), dataset.labels.to(device)
 
 
+def represent(images: torch.Tensor, representation: str) -> torch.Tensor:
+    if representation == "pixels":
+        return images
+    from PIL import Image
+    rgb = images.detach().cpu().mul(255).round().clamp(0, 255).byte().permute(0, 2, 3, 1).numpy()
+    import numpy as np
+    features = np.stack([image_descriptor(Image.fromarray(image), representation) for image in rgb])
+    return torch.from_numpy(features).to(images.device)
+
+
+@torch.no_grad()
+def fit_normalization(model: MLPVariant, images: torch.Tensor, experiment: Experiment):
+    """Fit immutable preprocessing buffers using only the unaugmented training split."""
+    if experiment.normalization == "none":
+        return
+    if experiment.normalization == "channel":
+        assert experiment.representation == "pixels"
+        mean = images.mean(dim=(0, 2, 3)).repeat_interleave(64 * 64).unsqueeze(0)
+        std = images.std(dim=(0, 2, 3), correction=0).clamp_min(0.05).repeat_interleave(64 * 64).unsqueeze(0)
+    elif experiment.normalization == "feature":
+        flattened = images.flatten(1)
+        mean = flattened.mean(dim=0, keepdim=True)
+        floor = torch.full_like(mean, 0.001)
+        if experiment.representation in {"pixels", "hybrid"}:
+            floor[:, :PIXEL_FEATURES] = 0.05
+        std = torch.maximum(flattened.std(dim=0, correction=0, keepdim=True), floor)
+    else:
+        raise ValueError(f"Unknown normalization: {experiment.normalization}")
+    model.input_mean.copy_(mean)
+    model.input_std.copy_(std)
+
+
 def run_seed(image_root: Path, manifest: Path, output: Path, seed: int, epochs: int, device: str,
-             batch_size: int = 64, names: list[str] | None = None):
+             batch_size: int = 64, names: list[str] | None = None, suite: str = "round1"):
     if epochs < 1 or batch_size < 1:
         raise ValueError("Epochs and batch size must be positive")
     output.mkdir(parents=True, exist_ok=False)
@@ -109,17 +167,26 @@ def run_seed(image_root: Path, manifest: Path, output: Path, seed: int, epochs: 
     device = torch.device(device)
     splits, classes = read_splits(manifest)
     manifest_hash = hashlib.sha256(manifest.read_bytes()).hexdigest()
-    train_x, train_y = cached_split(image_root, splits["train"], device)
-    val_x, val_y = cached_split(image_root, splits["val"], device)
+    raw_train_x, train_y = cached_split(image_root, splits["train"], device)
+    raw_val_x, val_y = cached_split(image_root, splits["val"], device)
     # The test images are deliberately not loaded by the candidate-training worker.
-    experiments = [experiment for experiment in EXPERIMENTS if names is None or experiment.name in names]
+    experiments = [experiment for experiment in SUITES[suite] if names is None or experiment.name in names]
     if not experiments or names and set(names) != {experiment.name for experiment in experiments}:
         raise ValueError("Unknown or empty experiment selection")
+    representations = {"pixels": (raw_train_x, None, raw_val_x)}
     for experiment in experiments:
+        representation = experiment.representation
+        if representation not in representations:
+            # Recompute descriptors on flipped images: reversing descriptor coordinates is incorrect.
+            representations[representation] = (represent(raw_train_x, representation),
+                                                represent(raw_train_x.flip(-1), representation),
+                                                represent(raw_val_x, representation))
+        train_x, flipped_x, val_x = representations[representation]
         directory = output / experiment.name
         directory.mkdir()
         torch.manual_seed(seed)
         model = MLPVariant(num_classes=len(classes), **experiment.model_config()).to(device)
+        fit_normalization(model, train_x, experiment)
         loss_fn = make_loss(experiment.loss, train_y, len(classes)).to(device)
         optimizer_type = torch.optim.AdamW if experiment.optimizer == "adamw" else torch.optim.Adam
         optimizer = optimizer_type(model.parameters(), lr=0.001, weight_decay=experiment.weight_decay)
@@ -139,8 +206,9 @@ def run_seed(image_root: Path, manifest: Path, output: Path, seed: int, epochs: 
             total_loss = torch.zeros((), device=device)
             for indices in order.split(batch_size):
                 images, labels = train_x[indices], train_y[indices]
-                flip = torch.rand((len(indices), 1, 1, 1), generator=flip_rng, device=device) < 0.5
-                images = torch.where(flip, images.flip(-1), images)
+                mask_shape = (len(indices),) + (1,) * (images.ndim - 1)
+                flip = torch.rand(mask_shape, generator=flip_rng, device=device) < 0.5
+                images = torch.where(flip, images.flip(-1) if flipped_x is None else flipped_x[indices], images)
                 optimizer.zero_grad(set_to_none=True)
                 loss = loss_fn(model(images), labels)
                 if not torch.isfinite(loss):
@@ -166,6 +234,7 @@ def run_seed(image_root: Path, manifest: Path, output: Path, seed: int, epochs: 
         checkpoint = {
             "architecture": "lab02-mlp-variant", "image_size": 64, "class_names": classes,
             "mlp_config": experiment.model_config(), "state_dict": best_state,
+            "feature_representation": experiment.representation,
         }
         torch.save(checkpoint, directory / "best.pt")
         restored, restored_classes = load_classifier(directory / "best.pt", device)
@@ -174,7 +243,7 @@ def run_seed(image_root: Path, manifest: Path, output: Path, seed: int, epochs: 
         validation, _, _ = measure(restored, val_x, val_y, classes)
         assert (validation["macro_f1"], validation["accuracy"]) == best_key
         result = {
-            "experiment": asdict(experiment), "seed": seed, "epochs": epochs, "batch_size": batch_size,
+            "experiment": asdict(experiment), "suite": suite, "seed": seed, "epochs": epochs, "batch_size": batch_size,
             "learning_rate": 0.001, "image_size": 64, "augmentation": "horizontal_flip_p0.5",
             "precision": "float32", "parameters": sum(parameter.numel() for parameter in model.parameters()),
             "training_seconds": elapsed, "best_epoch": best_epoch,
@@ -188,11 +257,11 @@ def run_seed(image_root: Path, manifest: Path, output: Path, seed: int, epochs: 
         print(f"DONE {experiment.name} seed={seed} best_epoch={best_epoch} seconds={elapsed:.1f}", flush=True)
 
 
-def summarize(image_root: Path, manifest: Path, output: Path, seeds: list[int], device: str):
+def summarize(image_root: Path, manifest: Path, output: Path, seeds: list[int], device: str, suite: str = "round1"):
     """Lock the winning configuration using mean validation F1, then evaluate test."""
     rows, results = [], {}
     expected_hash = hashlib.sha256(manifest.read_bytes()).hexdigest()
-    for experiment in EXPERIMENTS:
+    for experiment in SUITES[suite]:
         trials = []
         for seed in seeds:
             path = output / f"seed-{seed}" / experiment.name / "metrics.json"
@@ -213,7 +282,7 @@ def summarize(image_root: Path, manifest: Path, output: Path, seeds: list[int], 
     winner = max(rows, key=lambda row: (row["val_macro_f1_mean"], row["val_accuracy_mean"]))["name"]
     summary = {
         "selection": "configuration by mean validation macro-F1 over paired seeds; accuracy breaks ties",
-        "winner": winner, "seeds": seeds, "manifest_sha256": expected_hash, "validation": rows,
+        "winner": winner, "suite": suite, "seeds": seeds, "manifest_sha256": expected_hash, "validation": rows,
         "limitations": "The existing test split was inspected in earlier project experiments; this is an exploratory comparison, not a new untouched holdout.",
     }
     # Persist the decision BEFORE loading or evaluating the test split.
@@ -228,7 +297,8 @@ def summarize(image_root: Path, manifest: Path, output: Path, seeds: list[int], 
             directory = output / f"seed-{seed}" / name
             model, restored_classes = load_classifier(directory / "best.pt", device)
             assert restored_classes == classes
-            metrics, predictions, confidence = measure(model, test_x, test_y, classes)
+            inputs = represent(test_x, getattr(model, "feature_representation", "pixels"))
+            metrics, predictions, confidence = measure(model, inputs, test_y, classes)
             write_json(directory / "test-metrics.json", metrics)
             write_csv(directory / "test-predictions.csv", ("path", "actual", "predicted", "confidence"),
                       [(path, classes[label], classes[predicted], score) for (path, label), predicted, score
@@ -256,12 +326,13 @@ def main():
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--experiments", nargs="+")
+    parser.add_argument("--suite", choices=SUITES, default="round1")
     args = parser.parse_args()
     if args.mode == "train":
         run_seed(args.image_root, args.manifest, args.output, args.seed, args.epochs, args.device,
-                 args.batch_size, args.experiments)
+                 args.batch_size, args.experiments, args.suite)
     else:
-        summarize(args.image_root, args.manifest, args.output, args.seeds, args.device)
+        summarize(args.image_root, args.manifest, args.output, args.seeds, args.device, args.suite)
 
 
 if __name__ == "__main__":

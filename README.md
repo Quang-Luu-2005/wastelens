@@ -101,6 +101,18 @@ test accuracy is **62.33%**, versus **55.04%** for the baseline rerun in the sam
 experiment (**+7.29 percentage points**). Both seeds improve. This is an
 exploratory result, not an estimate of the best possible MLP performance.
 
+The [second round](reports/mlp-round2-20261111.md) tests input normalization,
+GELU, lighter/no dropout, matched dense blocks with/without skip connections,
+and fixed OpenCV HOG/HSV descriptors. Validation selects **HOG + HSV → MLP**:
+**77.32% mean test accuracy**, versus the reproduced first-round winner's
+**62.33%** (**+14.99 percentage points**). The classifier is still a randomly
+initialized 256-64-32 MLP with six outputs, now taking 2,268 descriptor values
+instead of 12,288 RGB pixels; it has **600,294 trainable parameters**.
+Descriptor extraction has no pretrained weights, and its train-fitted
+normalization buffers are saved with the checkpoint. See the
+[round-two protocol](docs/mlp-round2.md) and
+[Kaggle notebook](notebooks/mlp_ablation_round2_kaggle.ipynb).
+
 ## TrashNet split
 
 The [upstream TrashNet release](https://github.com/garythung/trashnet/tree/6fa2b878c6c1b4304b91109070ce0edf9279bb31) by Gary Thung and Mindy Yang contains 2,527 images at 512 × 384 pixels. The photographs use a white background. The small `trash` class and the controlled background both matter when interpreting performance on webcam footage.

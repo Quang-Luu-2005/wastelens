@@ -1,0 +1,514 @@
+{
+  "selection": "configuration by mean validation macro-F1 over paired seeds; accuracy breaks ties",
+  "winner": "hog_hsv",
+  "suite": "round2",
+  "seeds": [
+    42,
+    43
+  ],
+  "manifest_sha256": "836d92622ad570247b95fbf3f69787956a62a5479e53d0ac2e1d1886344f7d42",
+  "validation": [
+    {
+      "name": "baseline",
+      "parent": null,
+      "parameters": 3165414,
+      "val_accuracy_mean": 0.6302631497383118,
+      "val_accuracy_std": 0.0018607833617559715,
+      "val_macro_f1_mean": 0.6222720444202423,
+      "val_macro_f1_std": 0.0012818121037618201,
+      "train_accuracy_mean": 0.8313492238521576,
+      "training_seconds_mean": 77.70086904549999
+    },
+    {
+      "name": "no_dropout",
+      "parent": "baseline",
+      "parameters": 3165414,
+      "val_accuracy_mean": 0.664473682641983,
+      "val_accuracy_std": 0.0018608255086044823,
+      "val_macro_f1_mean": 0.6532118320465088,
+      "val_macro_f1_std": 0.004943656742933827,
+      "train_accuracy_mean": 0.9348072707653046,
+      "training_seconds_mean": 69.81677186850001
+    },
+    {
+      "name": "channel_std",
+      "parent": "baseline",
+      "parameters": 3165414,
+      "val_accuracy_mean": 0.6447368562221527,
+      "val_accuracy_std": 0.003721608870360454,
+      "val_macro_f1_mean": 0.6395042240619659,
+      "val_macro_f1_std": 0.0056661801669560825,
+      "train_accuracy_mean": 0.9963151812553406,
+      "training_seconds_mean": 74.3546093125
+    },
+    {
+      "name": "pixel_std",
+      "parent": "baseline",
+      "parameters": 3165414,
+      "val_accuracy_mean": 0.6421052813529968,
+      "val_accuracy_std": 0.007443217740720908,
+      "val_macro_f1_mean": 0.6333477795124054,
+      "val_macro_f1_std": 0.012368962073037604,
+      "train_accuracy_mean": 0.9985827505588531,
+      "training_seconds_mean": 71.94974022449998
+    },
+    {
+      "name": "gelu",
+      "parent": "channel_std",
+      "parameters": 3165414,
+      "val_accuracy_mean": 0.6552631556987762,
+      "val_accuracy_std": 0.011164826611081362,
+      "val_macro_f1_mean": 0.6439494788646698,
+      "val_macro_f1_std": 0.010693034788850414,
+      "train_accuracy_mean": 0.9980158805847168,
+      "training_seconds_mean": 71.02502171500004
+    },
+    {
+      "name": "light_dropout",
+      "parent": "gelu",
+      "parameters": 3165414,
+      "val_accuracy_mean": 0.6513158082962036,
+      "val_accuracy_std": 0.013025652119685843,
+      "val_macro_f1_mean": 0.6456973850727081,
+      "val_macro_f1_std": 0.018422176749869228,
+      "train_accuracy_mean": 0.9997165501117706,
+      "training_seconds_mean": 71.121460867
+    },
+    {
+      "name": "plain_blocks",
+      "parent": "light_dropout",
+      "parameters": 3412742,
+      "val_accuracy_mean": 0.6539473831653595,
+      "val_accuracy_std": 0.0018608255086044823,
+      "val_macro_f1_mean": 0.6588255763053894,
+      "val_macro_f1_std": 0.01559188943181716,
+      "train_accuracy_mean": 0.9997165501117706,
+      "training_seconds_mean": 93.0603759425
+    },
+    {
+      "name": "residual_blocks",
+      "parent": "plain_blocks",
+      "parameters": 3412742,
+      "val_accuracy_mean": 0.6618421077728271,
+      "val_accuracy_std": 0.009304001102476879,
+      "val_macro_f1_mean": 0.6543351411819458,
+      "val_macro_f1_std": 0.009847021098691238,
+      "train_accuracy_mean": 1.0,
+      "training_seconds_mean": 91.6470265465
+    },
+    {
+      "name": "hog_hsv",
+      "parent": "baseline",
+      "parameters": 600294,
+      "val_accuracy_mean": 0.7828947305679321,
+      "val_accuracy_std": 0.0018607833617559715,
+      "val_macro_f1_mean": 0.7833579480648041,
+      "val_macro_f1_std": 0.004337880089286746,
+      "train_accuracy_mean": 1.0,
+      "training_seconds_mean": 69.84394505
+    },
+    {
+      "name": "hybrid",
+      "parent": "baseline",
+      "parameters": 3746022,
+      "val_accuracy_mean": 0.7789473533630371,
+      "val_accuracy_std": 0.007443217740720908,
+      "val_macro_f1_mean": 0.7813496887683868,
+      "val_macro_f1_std": 0.0008701216875074073,
+      "train_accuracy_mean": 0.9997165501117706,
+      "training_seconds_mean": 70.06496977849997
+    }
+  ],
+  "limitations": "The existing test split was inspected in earlier project experiments; this is an exploratory comparison, not a new untouched holdout.",
+  "test": {
+    "baseline": {
+      "accuracy_mean": 0.6233421564102173,
+      "macro_f1_mean": 0.6087072193622589,
+      "trials": [
+        {
+          "seed": 42,
+          "accuracy": 0.6259946823120117,
+          "macro_f1": 0.6108291149139404,
+          "confusion_matrix": [
+            [
+              42.0,
+              2.0,
+              2.0,
+              6.0,
+              8.0,
+              0.0
+            ],
+            [
+              5.0,
+              43.0,
+              7.0,
+              3.0,
+              12.0,
+              5.0
+            ],
+            [
+              4.0,
+              16.0,
+              29.0,
+              3.0,
+              6.0,
+              3.0
+            ],
+            [
+              4.0,
+              6.0,
+              6.0,
+              67.0,
+              6.0,
+              0.0
+            ],
+            [
+              5.0,
+              11.0,
+              2.0,
+              9.0,
+              44.0,
+              1.0
+            ],
+            [
+              3.0,
+              3.0,
+              1.0,
+              0.0,
+              2.0,
+              11.0
+            ]
+          ],
+          "per_class": {
+            "cardboard": {
+              "precision": 0.6666666865348816,
+              "recall": 0.699999988079071,
+              "f1": 0.6829268336296082,
+              "support": 60.0
+            },
+            "glass": {
+              "precision": 0.5308641791343689,
+              "recall": 0.5733333230018616,
+              "f1": 0.5512820482254028,
+              "support": 75.0
+            },
+            "metal": {
+              "precision": 0.6170212626457214,
+              "recall": 0.4754098355770111,
+              "f1": 0.5370370149612427,
+              "support": 61.0
+            },
+            "paper": {
+              "precision": 0.7613636255264282,
+              "recall": 0.7528089880943298,
+              "f1": 0.7570621371269226,
+              "support": 89.0
+            },
+            "plastic": {
+              "precision": 0.5641025900840759,
+              "recall": 0.6111111044883728,
+              "f1": 0.5866666436195374,
+              "support": 72.0
+            },
+            "trash": {
+              "precision": 0.550000011920929,
+              "recall": 0.550000011920929,
+              "f1": 0.550000011920929,
+              "support": 20.0
+            }
+          },
+          "loss": 1.2123363018035889
+        },
+        {
+          "seed": 43,
+          "accuracy": 0.6206896305084229,
+          "macro_f1": 0.6065853238105774,
+          "confusion_matrix": [
+            [
+              41.0,
+              3.0,
+              3.0,
+              7.0,
+              6.0,
+              0.0
+            ],
+            [
+              4.0,
+              31.0,
+              10.0,
+              4.0,
+              24.0,
+              2.0
+            ],
+            [
+              2.0,
+              8.0,
+              33.0,
+              3.0,
+              12.0,
+              3.0
+            ],
+            [
+              1.0,
+              2.0,
+              8.0,
+              71.0,
+              7.0,
+              0.0
+            ],
+            [
+              3.0,
+              4.0,
+              6.0,
+              10.0,
+              48.0,
+              1.0
+            ],
+            [
+              2.0,
+              2.0,
+              2.0,
+              1.0,
+              3.0,
+              10.0
+            ]
+          ],
+          "per_class": {
+            "cardboard": {
+              "precision": 0.7735849022865295,
+              "recall": 0.6833333373069763,
+              "f1": 0.7256637215614319,
+              "support": 60.0
+            },
+            "glass": {
+              "precision": 0.6200000047683716,
+              "recall": 0.41333332657814026,
+              "f1": 0.4959999918937683,
+              "support": 75.0
+            },
+            "metal": {
+              "precision": 0.5322580933570862,
+              "recall": 0.5409836173057556,
+              "f1": 0.5365853905677795,
+              "support": 61.0
+            },
+            "paper": {
+              "precision": 0.7395833134651184,
+              "recall": 0.7977527976036072,
+              "f1": 0.7675675749778748,
+              "support": 89.0
+            },
+            "plastic": {
+              "precision": 0.47999998927116394,
+              "recall": 0.6666666865348816,
+              "f1": 0.5581395626068115,
+              "support": 72.0
+            },
+            "trash": {
+              "precision": 0.625,
+              "recall": 0.5,
+              "f1": 0.5555555820465088,
+              "support": 20.0
+            }
+          },
+          "loss": 1.1580346822738647
+        }
+      ]
+    },
+    "hog_hsv": {
+      "accuracy_mean": 0.7732095718383789,
+      "macro_f1_mean": 0.774120032787323,
+      "trials": [
+        {
+          "seed": 42,
+          "accuracy": 0.7745358347892761,
+          "macro_f1": 0.7769610285758972,
+          "confusion_matrix": [
+            [
+              50.0,
+              3.0,
+              1.0,
+              1.0,
+              5.0,
+              0.0
+            ],
+            [
+              1.0,
+              53.0,
+              5.0,
+              1.0,
+              12.0,
+              3.0
+            ],
+            [
+              2.0,
+              7.0,
+              39.0,
+              1.0,
+              11.0,
+              1.0
+            ],
+            [
+              1.0,
+              4.0,
+              2.0,
+              78.0,
+              3.0,
+              1.0
+            ],
+            [
+              1.0,
+              11.0,
+              2.0,
+              3.0,
+              55.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              2.0,
+              0.0,
+              0.0,
+              17.0
+            ]
+          ],
+          "per_class": {
+            "cardboard": {
+              "precision": 0.9090909361839294,
+              "recall": 0.8333333134651184,
+              "f1": 0.8695651888847351,
+              "support": 60.0
+            },
+            "glass": {
+              "precision": 0.6708860993385315,
+              "recall": 0.7066666483879089,
+              "f1": 0.6883116960525513,
+              "support": 75.0
+            },
+            "metal": {
+              "precision": 0.7647058963775635,
+              "recall": 0.6393442749977112,
+              "f1": 0.6964285969734192,
+              "support": 61.0
+            },
+            "paper": {
+              "precision": 0.9285714030265808,
+              "recall": 0.8764045238494873,
+              "f1": 0.9017341136932373,
+              "support": 89.0
+            },
+            "plastic": {
+              "precision": 0.6395348906517029,
+              "recall": 0.7638888955116272,
+              "f1": 0.6962025165557861,
+              "support": 72.0
+            },
+            "trash": {
+              "precision": 0.7727272510528564,
+              "recall": 0.8500000238418579,
+              "f1": 0.8095238208770752,
+              "support": 20.0
+            }
+          },
+          "loss": 1.7006053924560547
+        },
+        {
+          "seed": 43,
+          "accuracy": 0.7718833088874817,
+          "macro_f1": 0.7712790369987488,
+          "confusion_matrix": [
+            [
+              50.0,
+              3.0,
+              0.0,
+              2.0,
+              5.0,
+              0.0
+            ],
+            [
+              1.0,
+              58.0,
+              2.0,
+              3.0,
+              10.0,
+              1.0
+            ],
+            [
+              1.0,
+              11.0,
+              40.0,
+              0.0,
+              9.0,
+              0.0
+            ],
+            [
+              1.0,
+              5.0,
+              0.0,
+              75.0,
+              7.0,
+              1.0
+            ],
+            [
+              1.0,
+              13.0,
+              1.0,
+              2.0,
+              55.0,
+              0.0
+            ],
+            [
+              1.0,
+              1.0,
+              1.0,
+              2.0,
+              2.0,
+              13.0
+            ]
+          ],
+          "per_class": {
+            "cardboard": {
+              "precision": 0.9090909361839294,
+              "recall": 0.8333333134651184,
+              "f1": 0.8695651888847351,
+              "support": 60.0
+            },
+            "glass": {
+              "precision": 0.6373626589775085,
+              "recall": 0.7733333110809326,
+              "f1": 0.6987951993942261,
+              "support": 75.0
+            },
+            "metal": {
+              "precision": 0.9090909361839294,
+              "recall": 0.6557376980781555,
+              "f1": 0.761904776096344,
+              "support": 61.0
+            },
+            "paper": {
+              "precision": 0.8928571343421936,
+              "recall": 0.8426966071128845,
+              "f1": 0.8670520186424255,
+              "support": 89.0
+            },
+            "plastic": {
+              "precision": 0.625,
+              "recall": 0.7638888955116272,
+              "f1": 0.6875,
+              "support": 72.0
+            },
+            "trash": {
+              "precision": 0.8666666746139526,
+              "recall": 0.6499999761581421,
+              "f1": 0.7428571581840515,
+              "support": 20.0
+            }
+          },
+          "loss": 1.7464298009872437
+        }
+      ]
+    }
+  },
+  "accuracy_delta_percentage_points": 14.986741542816162
+}

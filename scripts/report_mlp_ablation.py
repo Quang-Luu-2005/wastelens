@@ -16,6 +16,7 @@ def report(root: Path, destination: Path):
     summary = json.loads((root / "run-summary.json").read_text(encoding="utf-8"))
     source = json.loads((root / "source-snapshot.json").read_text(encoding="utf-8"))
     winner, seeds = summary["winner"], summary["seeds"]
+    round2 = summary.get("suite") == "round2"
     baseline_rows = summary["test"]["baseline"]
     winner_rows = summary["test"][winner]
     rows = summary["validation"]
@@ -64,8 +65,9 @@ def report(root: Path, destination: Path):
     plt.close(fig)
 
     lines = [
-        "# Kết quả nâng cấp MLP Lab02 trên TrashNet", "",
+        "# Kết quả nâng cấp MLP Lab02 trên TrashNet" + (" — vòng hai" if round2 else ""), "",
         "Toàn bộ mô hình khởi tạo ngẫu nhiên, không sử dụng MobileNet hay pretrained.", "",
+        *( ["Đối chứng `baseline` của vòng hai là mô hình thắng vòng một: 256→64→32, LayerNorm, ReLU và dropout 0,25.", ""] if round2 else [] ),
         f"- Cấu hình được chọn bằng validation: **{winner}**.",
         f"- Test accuracy trung bình baseline: **{baseline_rows['accuracy_mean']:.2%}**.",
         f"- Test accuracy trung bình cấu hình được chọn: **{winner_rows['accuracy_mean']:.2%}**.",
@@ -100,11 +102,40 @@ def report(root: Path, destination: Path):
               "- Tập test đã được xem ở các thí nghiệm trước. Không phải một holdout mới chưa sử dụng.",
               "- Cùng 600 epoch, batch 64, RGB 64×64, Xavier-normal, lật ngang p=0,5 và float32.",
               "- So sánh chính dùng baseline chạy lại trong cùng pipeline. Không trộn với baseline lịch sử dùng cách sinh batch/augmentation khác.",
-              "- Nhánh AdamW/cosine thay cả optimizer, weight decay và lịch LR. Không tách riêng tác động của ba thành phần này.",
+              *( [] if round2 else ["- Nhánh AdamW/cosine thay cả optimizer, weight decay và lịch LR. Không tách riêng tác động của ba thành phần này."] ),
               f"- Manifest SHA-256: `{summary['manifest_sha256']}`.",
               f"- Snapshot nguồn SHA-256: `{source['sha256']}`.", "",
+              "Xem giao thức trong [mlp-round2.md](../docs/mlp-round2.md)." if round2 else
               "Xem giao thức và công thức loss trong [mlp-ablation.md](../docs/mlp-ablation.md).", ""]
-    lines += ["## Nhận xét", "",
+    if round2:
+        lines += ["## Các thay đổi được kiểm tra", "",
+                  "Vòng hai giữ CE, Adam LR 0,001 và tập dữ liệu; thử chuẩn hóa đầu vào, bỏ/giảm dropout, GELU, block dense có/không skip và đầu vào HOG + HSV.", "",
+                  "| Cặp đối chứng | Chênh validation accuracy | Chênh validation macro-F1 |",
+                  "| --- | ---: | ---: |"]
+        for row in rows:
+            if row["parent"]:
+                parent = by_name[row["parent"]]
+                lines.append(f"| {row['parent']} → {row['name']} | "
+                             f"{100*(row['val_accuracy_mean']-parent['val_accuracy_mean']):+.2f} đpt | "
+                             f"{row['val_macro_f1_mean']-parent['val_macro_f1_mean']:+.4f} |")
+        selected = json.loads((root / f"seed-{seeds[0]}" / winner / "metrics.json").read_text(encoding="utf-8"))["experiment"]
+        lines += ["", f"Cấu hình được chọn có các tầng ẩn `{selected['hidden_sizes']}`, dùng biểu diễn `{selected['representation']}`, chuẩn hóa "
+                  f"`{selected['normalization']}`, activation `{selected['activation']}`, dropout "
+                  f"{selected['dropout']} và block_depth={selected['block_depth']}, residual={selected['residual']}.", "",
+                  "HOG/HSV là đặc trưng OpenCV cố định đưa vào MLP, không phải backbone pretrained. "
+                  "Các nhánh descriptor thay đổi cả biểu diễn và số đầu vào nên cần đọc cùng số tham số. "
+                  "Cặp plain/residual giữ nguyên số tham số và khởi tạo, chỉ thay phép cộng skip.", ""]
+        if winner == "hog_hsv":
+            lines += ["## Nhận xét từ kết quả vòng hai", "",
+                      "- Chỉ bỏ dropout trong MLP pixel đã tăng validation accuracy từ 63,03% lên 66,45%. Điều này cho thấy dropout 0,25 chưa phải lựa chọn tốt nhất khi đã có LayerNorm.",
+                      "- Chuẩn hóa đầu vào và GELU mang lại mức cải thiện nhỏ hơn nhánh descriptor. Không phải mọi thay đổi được kết hợp đều tốt hơn cấu hình đơn giản.",
+                      "- Skip connection tăng validation accuracy khoảng 0,79 điểm phần trăm so với mạng plain có cùng tham số, nhưng validation macro-F1 giảm khoảng 0,0045. Chưa có bằng chứng nó tốt hơn theo tiêu chí chọn mô hình.",
+                      "- HOG + HSV đạt validation accuracy 78,29% và test accuracy 77,32%. Nhánh hybrid đạt validation 77,89%, chưa vượt HOG + HSV theo quy tắc chọn đã đặt.",
+                      "- Nhánh HOG + HSV vẫn giữ MLP 256→64→32→6, LayerNorm, ReLU, dropout 0,25, CE và Adam. Thay đổi chính là thay vector pixel 12288 chiều bằng descriptor 2268 chiều được chuẩn hóa theo train, giảm số tham số xuống 600294.",
+                      "- Đây là cải tiến cả biểu diễn lẫn số đầu vào và chuẩn hóa, không thể quy toàn bộ mức tăng cho riêng HOG hay riêng HSV. Cần ablation HOG-only/HSV-only nếu muốn tách hai đóng góp đó.",
+                      "- Train accuracy của nhánh thắng đạt 100%, trong khi validation/test khoảng 77–78%. Overfitting vẫn còn; kết quả chưa chứng minh khả năng tổng quát sang ảnh rác ngoài TrashNet.", ""]
+    else:
+        lines += ["## Nhận xét", "",
               "- Thêm tầng làm train accuracy tăng mạnh nhưng validation macro-F1 không tăng ở thí nghiệm này. Thêm độ sâu đơn thuần chưa đủ.",
               "- Tăng độ rộng cải thiện validation. Dropout 0,25 dùng riêng gây suy giảm rõ rệt; khi bổ sung LayerNorm, mạng học tốt trở lại.",
               "- Ba loss mới đều có validation macro-F1 thấp hơn cấu hình cha dùng CE trong lần chạy này. Không có bằng chứng chúng cải thiện chất lượng ở các thiết lập đã thử.",

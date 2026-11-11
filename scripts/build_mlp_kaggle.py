@@ -19,7 +19,10 @@ def code(source):
             "source": textwrap.dedent(source).strip() + "\n"}
 
 
-def build(staging: Path):
+def build(staging: Path, suite: str = "round1"):
+    run_name = "wastelens-mlp-round2" if suite == "round2" else "wastelens-mlp-ablation"
+    slug = run_name + "-20261111"
+    notebook_name = "mlp_ablation_round2_kaggle.ipynb" if suite == "round2" else "mlp_ablation_kaggle.ipynb"
     files = sorted((ROOT / "src/wastelens").glob("*.py")) + [
         ROOT / "scripts/prepare_trashnet.py", ROOT / "data/splits/trashnet.csv",
         ROOT / "data/splits/trashnet-summary.json",
@@ -37,7 +40,7 @@ def build(staging: Path):
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     cells = [{"cell_type": "markdown", "metadata": {}, "source":
               "# Lab02 MLP: controlled from-scratch ablations\n\n"
-              "Nine configurations, paired seeds 42/43, 600 epochs, RGB 64x64. "
+              f"Suite {suite}, paired seeds 42/43, 600 epochs, source images RGB 64x64. "
               "No pretrained weights. Select the configuration by mean validation macro-F1 before test. "
               "The test split has been inspected in prior project experiments. "
               "The embedded source snapshot, rather than a mutable Git branch, defines this run.\n"}]
@@ -54,7 +57,7 @@ def build(staging: Path):
         root.mkdir(exist_ok=False)
         with zipfile.ZipFile(io.BytesIO(payload)) as archive:
             archive.extractall(root)
-        run_root = Path("/kaggle/working/wastelens-mlp-ablation")
+        run_root = Path("/kaggle/working/{run_name}")
         run_root.mkdir(exist_ok=False)
         (run_root / "source-snapshot.zip").write_bytes(payload)
         (run_root / "source-snapshot.json").write_text(json.dumps({{
@@ -78,7 +81,7 @@ def build(staging: Path):
                            OMP_NUM_THREADS="2", CUBLAS_WORKSPACE_CONFIG=":4096:8")
                 args = [sys.executable, "-u", "-m", "wastelens.mlp_experiments", "train",
                         "--output", str(run_root / f"seed-{seed}"), "--seed", str(seed),
-                        "--epochs", "600", "--batch-size", "64", "--device", "cuda"]
+                        "--epochs", "600", "--batch-size", "64", "--device", "cuda", "--suite", "__SUITE__"]
                 worker = subprocess.Popen(args, cwd=root, env=env, stdout=log, stderr=subprocess.STDOUT)
                 workers.append((seed, worker, log_path))
                 print(f"Started seed {seed} on slot {slot}", flush=True)
@@ -97,9 +100,9 @@ def build(staging: Path):
                 raise RuntimeError(f"Seed {seed} failed with exit code {exit_code}")
         env = dict(os.environ, PYTHONPATH=str(root / "src"), CUBLAS_WORKSPACE_CONFIG=":4096:8")
         subprocess.run([sys.executable, "-u", "-m", "wastelens.mlp_experiments", "summarize",
-                        "--output", str(run_root), "--seeds", "42", "43", "--device", "cuda"],
+                        "--output", str(run_root), "--seeds", "42", "43", "--device", "cuda", "--suite", "__SUITE__"],
                        cwd=root, env=env, check=True)
-    '''))
+    '''.replace("__SUITE__", suite)))
     cells.append(code('''
         import csv
         import matplotlib.pyplot as plt
@@ -120,12 +123,12 @@ def build(staging: Path):
                 "language_info": {"name": "python"}}, "nbformat": 4, "nbformat_minor": 5}
     for index, cell in enumerate(cells):
         cell["id"] = f"mlp-ablation-{index}"
-    destination = ROOT / "notebooks/mlp_ablation_kaggle.ipynb"
+    destination = ROOT / "notebooks" / notebook_name
     destination.write_text(json.dumps(notebook, indent=1) + "\n", encoding="utf-8")
     staging.mkdir(parents=True, exist_ok=False)
     (staging / destination.name).write_bytes(destination.read_bytes())
     metadata = {
-        "id": "luquang231/wastelens-mlp-ablation-20261111", "title": "wastelens-mlp-ablation-20261111",
+        "id": "luquang231/" + slug, "title": slug,
         "code_file": destination.name, "language": "python", "kernel_type": "notebook",
         "is_private": True, "enable_gpu": True, "enable_tpu": False, "enable_internet": True,
         "machine_shape": "NvidiaTeslaT4", "dataset_sources": [], "kernel_sources": [], "competition_sources": [],
@@ -137,4 +140,6 @@ def build(staging: Path):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--staging", type=Path, required=True)
-    build(parser.parse_args().staging)
+    parser.add_argument("--suite", choices=("round1", "round2"), default="round1")
+    args = parser.parse_args()
+    build(args.staging, args.suite)
