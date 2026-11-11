@@ -1,6 +1,6 @@
 # WasteLens · Lab03
 
-WasteLens is a six-class waste classification project for Digital Image & Video Processing Lab03. The baseline classifier extends the Horse or Human MLP from Lab02; ImageNet-pretrained CNNs fine-tuned on the same fixed TrashNet split serve the application.
+WasteLens is a six-class waste classification project for Digital Image & Video Processing Lab03. The current focus is improving the Horse or Human MLP from Lab02 through controlled, from-scratch experiments. Earlier ImageNet-pretrained CNN experiments remain available for later comparison.
 
 ## Run locally
 
@@ -83,6 +83,23 @@ Both Lab02 notebooks, `lab02_horse_or_human.ipynb` and `lab02_horse_or_human_loc
 Lab02 computes BCE and a gradient on the binary logit using `sigmoid(z) − y`. Lab03 computes cross-entropy from six logits and integer class IDs. Its logit gradient is `softmax(z) − one_hot(y)` before batch averaging. The network uses `nn.Linear`, autograd and Adam to propagate gradients and update weights. Inference applies softmax to obtain the six probabilities in manifest order.
 
 The repository separates the reusable model and data loading in `src/wastelens/`, the Kaggle notebook in `notebooks/`, dataset preparation in `scripts/`, and experiment outputs in `outputs/`.
+
+### From-scratch MLP ablations
+
+The current investigation sets pretrained backbones aside and tests nine explicit
+Lab02 MLP variants: depth, width, dropout, LayerNorm, AdamW with cosine decay,
+label smoothing, class-weighted cross-entropy and focal loss. Each receives 600
+epochs at RGB 64x64 with paired seeds 42/43. Configuration selection uses mean
+validation macro-F1 before evaluating baseline and winner on test. See the
+[experimental protocol](docs/mlp-ablation.md) and the self-contained
+[Kaggle notebook](notebooks/mlp_ablation_kaggle.ipynb). Results are exploratory
+because this project's test split has already been inspected in prior runs.
+
+The [completed two-seed comparison](reports/mlp-ablation-20261111.md) selects the
+256-64-32 MLP with LayerNorm and dropout, ordinary cross-entropy and Adam. Mean
+test accuracy is **62.33%**, versus **55.04%** for the baseline rerun in the same
+experiment (**+7.29 percentage points**). Both seeds improve. This is an
+exploratory result, not an estimate of the best possible MLP performance.
 
 ## TrashNet split
 

@@ -47,6 +47,39 @@ class Lab02MLP(nn.Module):
         return self.layers(images)
 
 
+class MLPVariant(nn.Module):
+    """Lab02-style dense network, trained from scratch with explicit ablation settings."""
+
+    def __init__(
+        self, image_size: int = 64, num_classes: int = 6,
+        hidden_sizes: tuple[int, ...] = (128, 32), dropout: float = 0.0,
+        layer_norm: bool = False,
+    ):
+        super().__init__()
+        if not hidden_sizes or any(size < 1 for size in hidden_sizes) or not 0 <= dropout < 1:
+            raise ValueError("Expected positive hidden sizes and dropout in [0, 1)")
+        self.image_size = image_size
+        layers = [nn.Flatten()]
+        previous = 3 * image_size * image_size
+        for size in hidden_sizes:
+            layers.append(nn.Linear(previous, size))
+            if layer_norm:
+                layers.append(nn.LayerNorm(size))
+            layers.append(nn.ReLU())
+            if dropout:
+                layers.append(nn.Dropout(dropout))
+            previous = size
+        layers.append(nn.Linear(previous, num_classes))
+        self.layers = nn.Sequential(*layers)
+        for layer in self.layers:
+            if isinstance(layer, nn.Linear):
+                nn.init.xavier_normal_(layer.weight)
+                nn.init.zeros_(layer.bias)
+
+    def forward(self, images: torch.Tensor) -> torch.Tensor:
+        return self.layers(images)
+
+
 class PretrainedClassifier(nn.Module):
     """An ImageNet CNN whose 1000-class output layer is replaced by a six-class layer.
 
@@ -113,7 +146,10 @@ def load_classifier(path: Path, device: torch.device | str = "cpu") -> tuple[nn.
     image_size = checkpoint["image_size"]
     # Checkpoints written before backbones were added carry no architecture field.
     architecture = checkpoint.get("architecture", "lab02-mlp")
-    model = build_classifier(architecture, tuple(image_size) if isinstance(image_size, list) else image_size, len(classes))
+    if architecture == "lab02-mlp-variant":
+        model = MLPVariant(image_size=image_size, num_classes=len(classes), **checkpoint["mlp_config"])
+    else:
+        model = build_classifier(architecture, tuple(image_size) if isinstance(image_size, list) else image_size, len(classes))
     model.load_state_dict(checkpoint["state_dict"])
     return model.to(device).eval(), classes
 
