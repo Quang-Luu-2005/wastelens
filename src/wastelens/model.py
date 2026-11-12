@@ -110,6 +110,42 @@ class MLPVariant(nn.Module):
         return self.layers(images)
 
 
+class DescriptorEnsemble(nn.Module):
+    """Average the softmax outputs of descriptor MLPs, then apply one calibration temperature.
+
+    Members may use different descriptors (for example HOG + HSV + Lab and HSV only); each
+    distinct descriptor is computed once per image. Predictions whose calibrated top-1
+    probability falls below `uncertain_threshold` should be shown as "uncertain".
+    """
+
+    def __init__(self, members: list[tuple[str, nn.Module]], temperature: float = 1.0,
+                 uncertain_threshold: float = 0.0):
+        super().__init__()
+        if not members or temperature <= 0:
+            raise ValueError("Expected at least one member and a positive temperature")
+        self.representations = [representation for representation, _ in members]
+        self.members = nn.ModuleList(member for _, member in members)
+        self.temperature = float(temperature)
+        self.uncertain_threshold = float(uncertain_threshold)
+        self.image_size = 64
+
+    def describe(self, image: Image.Image) -> dict[str, torch.Tensor]:
+        """Compute each distinct descriptor once, as a (1, features) float tensor."""
+        from .features import image_descriptor
+        return {representation: torch.from_numpy(image_descriptor(image, representation)).unsqueeze(0)
+                for representation in dict.fromkeys(self.representations)}
+
+    def forward(self, descriptors: dict[str, torch.Tensor]) -> torch.Tensor:
+        """Return calibrated probabilities with shape (batch, classes)."""
+        device = next(self.parameters()).device
+        probabilities = torch.stack([
+            member(descriptors[representation].to(device)).softmax(dim=1)
+            for representation, member in zip(self.representations, self.members, strict=True)
+        ]).mean(dim=0)
+        # Temperature acts on the log of the averaged probabilities; T > 1 softens overconfidence.
+        return (probabilities.clamp_min(1e-12).log() / self.temperature).softmax(dim=1)
+
+
 class PretrainedClassifier(nn.Module):
     """An ImageNet CNN whose 1000-class output layer is replaced by a six-class layer.
 
@@ -176,6 +212,14 @@ def load_classifier(path: Path, device: torch.device | str = "cpu") -> tuple[nn.
     image_size = checkpoint["image_size"]
     # Checkpoints written before backbones were added carry no architecture field.
     architecture = checkpoint.get("architecture", "lab02-mlp")
+    if architecture == "descriptor-ensemble":
+        members = []
+        for member in checkpoint["members"]:
+            network = MLPVariant(image_size=image_size, num_classes=len(classes), **member["mlp_config"])
+            network.load_state_dict(member["state_dict"])
+            members.append((member["representation"], network))
+        model = DescriptorEnsemble(members, checkpoint["temperature"], checkpoint["uncertain_threshold"])
+        return model.to(device).eval(), classes
     if architecture == "lab02-mlp-variant":
         model = MLPVariant(image_size=image_size, num_classes=len(classes), **checkpoint["mlp_config"])
         model.feature_representation = checkpoint.get("feature_representation", "pixels")
@@ -188,6 +232,8 @@ def load_classifier(path: Path, device: torch.device | str = "cpu") -> tuple[nn.
 @torch.inference_mode()
 def predict_probabilities(model: nn.Module, image: Image.Image) -> torch.Tensor:
     """Return a CPU probability vector in the checkpoint's class order."""
+    if isinstance(model, DescriptorEnsemble):
+        return model(model.describe(image)).squeeze(0).cpu()
     representation = getattr(model, "feature_representation", "pixels")
     if representation != "pixels":
         from .features import image_descriptor

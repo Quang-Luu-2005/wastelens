@@ -122,6 +122,31 @@ macro-F1 with 148,710 parameters; the selection is exploratory, not a claim of
 statistical superiority. See the [protocol](docs/mlp-round3.md) and
 [notebook](notebooks/mlp_ablation_round3_kaggle.ipynb).
 
+Single-split selection cannot resolve these differences: at about 79%, the 95%
+interval on 377 test images is 74.3–82.8%. The [CV protocol](docs/mlp-cv.md)
+re-ranks the round-three HOG + HSV, HOG + HSV + Lab and HSV-only MLPs with
+repeated stratified 5-fold CV (3 repeats × 5 seeds) on train + val. It also
+selects the epoch budget, seed ensembling and post-hoc logit adjustment by the
+one-SE rule, then evaluates the test split once with exact and bootstrap
+intervals and a McNemar test. Run it with `python -m wastelens.cv` or the
+[Kaggle notebook](notebooks/mlp_cv_kaggle.ipynb).
+
+The CV run selected 5 HOG + HSV + Lab MLPs at 300 epochs. That ensemble scored
+**83.55%** test accuracy (315/377, 95% interval 79.4–87.2%) against 78.8%
+out-of-fold. The application uses a two-view ensemble written by
+`python -m wastelens.cv export`: those 5 MLPs plus 5 HSV-only MLPs, retrained on
+all train + val images without reading the test split. Its out-of-fold accuracy
+is 80.8%. A paired Kaggle run then evaluated this ensemble at 300 and 600 epochs
+on the test split. The 300-epoch ensemble scored **85.68%** (323/377, 95%
+interval 81.7–89.1%, macro-F1 0.861) and the 600-epoch ensemble 84.62%. With
+only 14 discordant images (exact McNemar p = 0.42), the two are statistically
+indistinguishable, so the cheaper 300-epoch checkpoint is deployed. This was
+another look at an already-inspected test split. Calibrated predictions below the stored threshold are labelled
+`uncertain`; the accepted out-of-fold predictions are 90% correct at 77%
+coverage. `wastelens.classifier.WasteClassifier` loads the checkpoint. On CPU it
+takes about 9 ms per image (median, features and model). See
+[the export section](docs/mlp-cv.md#deployed-ensemble).
+
 ## TrashNet split
 
 The [upstream TrashNet release](https://github.com/garythung/trashnet/tree/6fa2b878c6c1b4304b91109070ce0edf9279bb31) by Gary Thung and Mindy Yang contains 2,527 images at 512 × 384 pixels. The photographs use a white background. The small `trash` class and the controlled background both matter when interpreting performance on webcam footage.

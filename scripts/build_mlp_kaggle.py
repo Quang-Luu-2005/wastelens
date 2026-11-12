@@ -19,10 +19,8 @@ def code(source):
             "source": textwrap.dedent(source).strip() + "\n"}
 
 
-def build(staging: Path, suite: str = "round1"):
-    run_name = f"wastelens-mlp-{suite}" if suite != "round1" else "wastelens-mlp-ablation"
-    slug = run_name + "-20261111"
-    notebook_name = f"mlp_ablation_{suite}_kaggle.ipynb" if suite != "round1" else "mlp_ablation_kaggle.ipynb"
+def snapshot() -> tuple[str, str, str]:
+    """Zip the package, data preparation script and split files; return (base64, sha256, git revision)."""
     files = sorted((ROOT / "src/wastelens").glob("*.py")) + [
         ROOT / "scripts/prepare_trashnet.py", ROOT / "data/splits/trashnet.csv",
         ROOT / "data/splits/trashnet-summary.json",
@@ -34,10 +32,18 @@ def build(staging: Path, suite: str = "round1"):
             entry = zipfile.ZipInfo(path.relative_to(ROOT).as_posix(), (2026, 1, 1, 0, 0, 0))
             entry.compress_type = zipfile.ZIP_DEFLATED
             archive.writestr(entry, path.read_bytes())
-    snapshot = stream.getvalue()
-    sha256 = hashlib.sha256(snapshot).hexdigest()
-    encoded = base64.b64encode(snapshot).decode("ascii")
+    payload = stream.getvalue()
+    sha256 = hashlib.sha256(payload).hexdigest()
+    encoded = base64.b64encode(payload).decode("ascii")
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    return encoded, sha256, revision
+
+
+def build(staging: Path, suite: str = "round1"):
+    run_name = f"wastelens-mlp-{suite}" if suite != "round1" else "wastelens-mlp-ablation"
+    slug = run_name + "-20261111"
+    notebook_name = f"mlp_ablation_{suite}_kaggle.ipynb" if suite != "round1" else "mlp_ablation_kaggle.ipynb"
+    encoded, sha256, revision = snapshot()
     cells = [{"cell_type": "markdown", "metadata": {}, "source":
               "# Lab02 MLP: controlled from-scratch ablations\n\n"
               f"Suite {suite}, paired seeds 42/43, 600 epochs; descriptor resolution is explicit in the configuration. "
