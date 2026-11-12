@@ -44,6 +44,26 @@ The affine checkpoint at epoch 460 scored 70.18% on unaugmented training images 
 
 The [input experiments](https://www.kaggle.com/code/luquang231/wastelens-lab03-input-ablation-20261110) and [original-size learning-rate experiments](https://www.kaggle.com/code/luquang231/wastelens-lab03-native-lr-20261110) contain their run histories and outputs. The Kaggle notebooks are private to the connected account.
 
+## Run the app
+
+The Streamlit app needs the deployed checkpoint at `models/wastelens-ensemble.pt`. The file is git-ignored; copy it from the shared Drive folder or write one with `python -m wastelens.cv export`.
+
+```powershell
+.\.venv\Scripts\python.exe -m streamlit run app/app.py
+```
+
+The image mode accepts a JPG or PNG upload, or a held-out TrashNet test image when `data/trashnet/` has been prepared.
+
+| Part | What it does |
+| --- | --- |
+| Module 1 (sidebar) | Color: gamma, contrast and brightness, HSV hue/saturation/value, CLAHE, grayscale. Geometry: rotation, scale, flips, center crop. Smoothing: Gaussian, median, bilateral. Optional synthetic Gaussian and salt-and-pepper noise. Original and processed images appear side by side. |
+| Module 2 | Prediction on the processed image: top-1 label, calibrated confidence and a bar chart of all six classes. Shows *uncertain* below the stored threshold. Times Module 1, descriptor extraction and the ensemble separately. When Module 1 is active, also shows the prediction on the original image. |
+| Snapshot & export | Downloads the annotated result PNG, the processed PNG and a JSON record of the settings, prediction and timings. |
+
+The operations live in [`wastelens.ops`](src/wastelens/ops.py) as functions from a BGR image to a BGR image, so video, webcam and the filter experiment can reuse them. Uploads larger than 1024 px on the long side are downscaled first.
+
+The calibrated confidence is reliable only for photos like TrashNet's. Shifting the hue of a held-out cardboard photo by 40 OpenCV units flips the prediction to glass at 97% confidence. Random-noise images can also receive confident labels.
+
 ## Pretrained backbones
 
 `--architecture` selects `lab02-mlp` (default), `mobilenet_v3_large`, `efficientnet_b0` or `resnet50`. A backbone downloads its torchvision ImageNet weights, replaces the 1000-class layer with a six-class layer and fine-tunes the whole network.
