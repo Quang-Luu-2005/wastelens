@@ -1,0 +1,26 @@
+{
+  "base_url": "https://github.com/Quang-Luu-2005/wastelens/releases/download/runtime-v1",
+  "test_images": 377,
+  "assets": [
+    {
+      "name": "wastelens-baseline.pt",
+      "sha256": "4bcfae31391cdf900454785e10cd6345ea87716f22e1c0c82e7fa6add70aa8f1",
+      "bytes": 6312049
+    },
+    {
+      "name": "wastelens-ensemble.pt",
+      "sha256": "061513298ee3991b4c3de62f5ce7d2ff20c1907b8ce9e2803d0418ffe6880d45",
+      "bytes": 17742767
+    },
+    {
+      "name": "wastelens-mobilenetv3.pt",
+      "sha256": "dd62a1e6500111cc02547bac4a1c96f386b9514fdb6f1b82f031ef7706203c36",
+      "bytes": 17020107
+    },
+    {
+      "name": "trashnet-test.zip",
+      "sha256": "72685b2aa71d58114faa32a4e6edcd0e001387a30e7d9d5aae00ad1a265ca16f",
+      "bytes": 6280345
+    }
+  ]
+}

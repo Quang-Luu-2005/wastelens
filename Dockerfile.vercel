@@ -1,0 +1,32 @@
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    OMP_NUM_THREADS=1 \
+    MKL_NUM_THREADS=1 \
+    PORT=80 \
+    STREAMLIT_SERVER_ADDRESS=0.0.0.0 \
+    STREAMLIT_SERVER_HEADLESS=true \
+    STREAMLIT_SERVER_MAX_UPLOAD_SIZE=4 \
+    STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+
+WORKDIR /app
+COPY deployment/requirements.txt deployment/requirements.txt
+RUN pip install torch==2.14.1 torchvision==0.29.1 --index-url https://download.pytorch.org/whl/cpu \
+    && pip install -r deployment/requirements.txt
+
+COPY pyproject.toml ./
+COPY src/wastelens/__init__.py src/wastelens/classifier.py src/wastelens/model.py \
+    src/wastelens/features.py src/wastelens/ops.py src/wastelens/profiles.py src/wastelens/workbench.py src/wastelens/
+RUN pip install --no-deps -e .
+COPY app/ app/
+COPY .streamlit/ .streamlit/
+COPY data/splits/ data/splits/
+COPY deployment/ deployment/
+RUN python deployment/fetch_assets.py
+
+EXPOSE 80
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:' + __import__('os').environ.get('PORT', '80') + '/_stcore/health', timeout=4)"
+CMD ["sh", "-c", "exec python -m streamlit run app/app.py --server.port=${PORT:-80}"]

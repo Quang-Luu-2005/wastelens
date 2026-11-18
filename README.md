@@ -97,6 +97,8 @@ UI regression checks (the inference tests require the installed checkpoints):
 
 ## Pretrained backbones
 
+For the Vercel container deployment, build/run commands and the verified model/test-image assets, see [deployment/README.md](deployment/README.md). This uses the Vercel Container Runtime beta and CPU inference, with a 4 MB upload cap in the deployed container.
+
 `--architecture` selects `lab02-mlp` (default), `mobilenet_v3_large`, `efficientnet_b0` or `resnet50`. A backbone downloads its torchvision ImageNet weights, replaces the 1000-class layer with a six-class layer and fine-tunes the whole network.
 
 ```powershell
