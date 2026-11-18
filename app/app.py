@@ -26,6 +26,7 @@ from wastelens import ops
 from wastelens.classifier import Prediction, WasteClassifier
 from wastelens.profiles import DEFAULT_MODEL, MODEL_PROFILES
 from wastelens.workbench import PRESETS, PRESET_DESCRIPTIONS, assess_prediction, describe_operations, request_signature
+from wastelens.streaming import DETECTOR_WEIGHTS, ObjectDetector, ObjectTracker, decode_frame, recognize_objects
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_SIDE = 1024
@@ -93,6 +94,105 @@ def load_model(checkpoint: str, modified_ns: int) -> WasteClassifier:
 def profile_model(key: str) -> WasteClassifier:
     path = MODEL_PROFILES[key].checkpoint
     return load_model(str(path), path.stat().st_mtime_ns)
+
+
+@st.cache_resource(show_spinner="Đang nạp bộ phát hiện vật…")
+def load_detector(checkpoint: str, modified_ns: int):
+    return ObjectDetector(Path(checkpoint))
+
+
+@st.cache_resource
+def camera_component(asset_revision: tuple[int, ...]):
+    from streamlit.components.v2 import component
+    assets = Path(__file__).with_name("camera")
+    return component("wastelens_camera", **{kind: (assets / f"component.{kind}").read_text(encoding="utf-8")
+                                           for kind in ("html", "css", "js")})
+
+
+def render_webcam():
+    st.caption("SSDLite phát hiện vật → cắt vùng ảnh → mô hình bạn chọn phân loại thành 6 loại rác.")
+    model_col, processing_col, settings_col = st.columns([4, 3, 2])
+    key = model_col.selectbox("Mô hình phân loại", list(MODEL_NAMES), format_func=MODEL_NAMES.get,
+                              index=list(MODEL_NAMES).index(DEFAULT_MODEL), key="camera_model")
+    preset = processing_col.selectbox("Xử lý vùng ảnh", list(PRESETS), key="camera_preset")
+    with settings_col.popover("Thiết lập stream", width="stretch"):
+        fps = st.slider("Khung hình phân tích / giây", 1, 5, 2, key="camera_fps")
+        threshold = st.slider("Ngưỡng phát hiện vật", .2, .9, .45, .05, key="camera_threshold")
+        max_objects = st.slider("Số vật tối đa mỗi khung", 1, 5, 3, key="camera_max_objects")
+        st.caption("Video xem trực tiếp; chỉ gửi khung tiếp theo khi xử lý xong khung trước.")
+    if not DETECTOR_WEIGHTS.is_file():
+        st.info("Cần tải bộ phát hiện vật trước khi bật webcam.")
+        st.code(".venv\\Scripts\\python.exe scripts/prepare_detector.py", language="powershell")
+        return
+    if not MODEL_PROFILES[key].checkpoint.is_file():
+        st.error(f"Thiếu checkpoint: {MODEL_PROFILES[key].filename}")
+        return
+    state = st.session_state.setdefault("camera_state", {"response": None, "objects": [], "marker": None,
+                                                         "session": None, "active": False, "selected": None})
+    settings = (key, preset, threshold, max_objects)
+    if state.get("settings") != settings:
+        state.update(settings=settings, objects=[], selected=None)
+        if state["response"]:
+            state["response"] = {**state["response"], "objects": []}
+    assets = Path(__file__).with_name("camera")
+    revision = tuple((assets / f"component.{kind}").stat().st_mtime_ns for kind in ("html", "css", "js"))
+    result = camera_component(revision)(data={"fps": fps, "response": state["response"], "selected": state["selected"]},
+                                key="live_camera", default={"frame": None, "event": None, "selection": None},
+                                on_frame_change=lambda: None, on_event_change=lambda: None,
+                                on_selection_change=lambda: None)
+    event = result.event
+    if isinstance(event, dict) and event != state.get("last_event"):
+        state["last_event"] = event
+        state.update(active=event.get("active") is True, session=event.get("session"), objects=[], selected=None,
+                     response=None, tracker=ObjectTracker())
+    selection = result.selection
+    if isinstance(selection, dict) and selection.get("session") == state["session"] and selection != state.get("selection_event"):
+        state["selected"] = selection.get("id")
+        state["selection_event"] = selection
+    payload = result.frame
+    if isinstance(payload, dict) and state["active"] and payload.get("session") == state["session"]:
+        marker = (payload.get("session"), payload.get("seq"))
+        if marker != state["marker"]:
+            state["marker"] = marker
+            response = {"session": marker[0], "seq": marker[1], "objects": [], "width": 1, "height": 1}
+            try:
+                frame = decode_frame(payload)
+                detector = load_detector(str(DETECTOR_WEIGHTS), DETECTOR_WEIGHTS.stat().st_mtime_ns)
+                objects = recognize_objects(frame, detector, profile_model(key), state["tracker"], PRESETS[preset],
+                                            threshold=threshold, max_objects=max_objects)
+                state["objects"] = objects
+                response.update(width=frame.shape[1], height=frame.shape[0], objects=[
+                    {"id": obj["id"], "box": obj["box"], "label": LABELS_VI[obj["prediction"].label],
+                     "confidence": obj["prediction"].confidence} for obj in objects])
+                if state["selected"] not in [obj["id"] for obj in objects]:
+                    state["selected"] = objects[0]["id"] if objects else None
+            except (ValueError, OSError, RuntimeError) as error:
+                state["objects"] = []
+                response["error"] = "Không xử lý được khung hình. Dừng rồi bật lại camera."
+                state["error"] = str(error)
+            state["response"] = response
+            st.rerun()
+    objects = state["objects"] if state["active"] else []
+    if objects:
+        ids = [obj["id"] for obj in objects]
+        selected = state["selected"] if state["selected"] in ids else ids[0]
+        st.caption("Vật đang xem")
+        for column, object_id in zip(st.columns(len(ids)), ids):
+            if column.button(f"Vật #{object_id}", key=f"camera_object_{object_id}",
+                             type="primary" if object_id == selected else "secondary", width="stretch"):
+                state["selected"] = object_id
+                st.rerun()
+        obj = next(obj for obj in objects if obj["id"] == selected)
+        prediction = obj["prediction"]
+        st.markdown(f"**Vật #{selected} · {LABELS_VI[prediction.label]} · {prediction.confidence:.1%}**")
+        st.caption(f"Phát hiện: {obj['detector_category']} ({obj['detector_confidence']:.0%}) · "
+                   f"Phân loại: {MODEL_NAMES[key]} · Xử lý: {preset}")
+        probability_table(prediction)
+    else:
+        st.info("Chưa có vật để phân loại." if state["active"] else "Bật camera để bắt đầu. Bạn có thể dừng bất cứ lúc nào.")
+        probability_table(None)
+    st.caption("Webcam không có Ground Truth. SSDLite nhận diện vật thuộc COCO, có thể bỏ sót rác không nằm trong các loại vật đã học. "
+               "Nhãn rác được suy luận riêng trên từng vùng ảnh; đưa một vật rõ nét trước camera để thử.")
 
 
 @st.cache_data
@@ -284,7 +384,8 @@ def show_help():
                 "3. Bấm **Phân loại** để xem kết quả và xác suất sáu lớp.\n"
                 "4. Tải PNG/JSON hoặc so sánh ba mô hình trên cùng ảnh.")
     st.info("Mức xử lý là preset bộ lọc ảnh. Mức mạnh hơn không đảm bảo phân loại tốt hơn.")
-    st.caption("Ảnh lớn được thu về tối đa 1.024 px ở cạnh dài. Chế độ video và webcam chưa được triển khai.")
+    st.caption("Ảnh lớn được thu về tối đa 1.024 px ở cạnh dài. Chọn tab Webcam để phát hiện và phân loại vật trực tiếp; "
+               "bấm Bật camera rồi cấp quyền, chọn mô hình và nhấp khung bao để xem xác suất. Bấm Dừng camera để kết thúc.")
 
 
 @st.dialog("Thông tin mô hình", width="large")
@@ -421,7 +522,7 @@ def render_toolbar(has_image: bool):
         with source_col:
             with st.popover("Ảnh", icon=":material/image:", width="stretch"):
                 st.write("Ảnh JPG / PNG")
-                st.caption("Video và webcam chưa được triển khai.")
+                st.caption("Chuyển sang tab Webcam ở đầu trang để phân loại trực tiếp.")
         key = st.session_state.get("model_key", DEFAULT_MODEL)
         available = MODEL_PROFILES[key].checkpoint.is_file()
         run = run_col.button("Phân loại" if st.session_state.result is None else "Phân loại lại",
@@ -621,6 +722,12 @@ def main():
     st.html(Path(__file__).with_name("styles.css"))
     init_state()
     render_header()
+    mode = st.segmented_control("Nguồn đầu vào", ["Ảnh", "Webcam"], default="Ảnh", required=True, key="input_mode")
+    if mode == "Webcam":
+        render_webcam()
+        return
+    if "camera_state" in st.session_state:
+        del st.session_state["camera_state"]
     image, processed, params, ops_ms = render_viewer()
     key, run, available = render_toolbar(image is not None)
     signature = None

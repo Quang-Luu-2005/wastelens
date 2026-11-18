@@ -200,6 +200,10 @@ coverage. `wastelens.classifier.WasteClassifier` loads the checkpoint. On CPU it
 takes about 9 ms per image (median, features and model). See
 [the export section](docs/mlp-cv.md#deployed-ensemble).
 
+## Local webcam
+
+The **Webcam** tab detects objects with SSDLite, draws bounding boxes, and classifies each crop using the selected Baseline Lab 2, improved MLP, or MobileNet model. Select a box to inspect its six-class probabilities. Run `python scripts/prepare_detector.py` once before opening the camera. See [local webcam setup and limitations](docs/webcam-local.md).
+
 ## TrashNet split
 
 The [upstream TrashNet release](https://github.com/garythung/trashnet/tree/6fa2b878c6c1b4304b91109070ce0edf9279bb31) by Gary Thung and Mindy Yang contains 2,527 images at 512 × 384 pixels. The photographs use a white background. The small `trash` class and the controlled background both matter when interpreting performance on webcam footage.
