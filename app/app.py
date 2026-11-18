@@ -15,7 +15,8 @@ import streamlit as st
 from PIL import Image, ImageOps
 
 from wastelens import ops
-from wastelens.classifier import DEFAULT_CHECKPOINT, Prediction, WasteClassifier
+from wastelens.classifier import Prediction, WasteClassifier
+from wastelens.profiles import DEFAULT_MODEL, MODEL_PROFILES
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_SIDE = 1024  # Larger uploads are downscaled so slow filters (bilateral) stay interactive.
@@ -33,9 +34,41 @@ PARAM_KEYS = [field for field in ops.OpsParams.__dataclass_fields__]
 
 
 @st.cache_resource(show_spinner="Đang nạp model…")
-def load_model() -> WasteClassifier:
-    """Load the 10-MLP ensemble once per server process."""
-    return WasteClassifier(DEFAULT_CHECKPOINT)
+def load_model(checkpoint: str, modified_ns: int) -> WasteClassifier:
+    """Cache each checkpoint separately; replacing a file invalidates its entry."""
+    return WasteClassifier(Path(checkpoint))
+
+
+def profile_model(key: str) -> WasteClassifier:
+    path = MODEL_PROFILES[key].checkpoint
+    return load_model(str(path), path.stat().st_mtime_ns)
+
+
+def comparison_table(processed: np.ndarray, selected_key: str, prediction: Prediction) -> dict:
+    """Evaluate the same processed image with every available model, independently."""
+    rows, records = [], {}
+    for key, profile in MODEL_PROFILES.items():
+        if not profile.checkpoint.is_file():
+            st.warning(f"Thiếu checkpoint cho {profile.name}: `{profile.filename}`")
+            continue
+        classifier = profile_model(key)
+        result = prediction if key == selected_key else classifier.classify(processed)
+        confidence_kind = "Đã hiệu chỉnh" if classifier.calibrated else "Softmax chưa hiệu chỉnh"
+        rows.append({
+            "Mô hình": profile.name, "Kết quả": display_label(result),
+            "Lớp cao nhất": LABELS_VI[result.top_class], "Confidence (%)": round(100 * result.confidence, 2),
+            "Loại confidence": confidence_kind, "Suy luận (ms)": round(result.timings_ms["total"], 2),
+        })
+        records[key] = {
+            "checkpoint": profile.filename, "training": profile.training,
+            "label": result.label, "top_class": result.top_class, "confidence": result.confidence,
+            "calibrated": classifier.calibrated, "uncertain_threshold": classifier.threshold,
+            "probabilities": result.probabilities, "timings_ms": result.timings_ms,
+        }
+    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+    st.caption("Cả ba nhận cùng ảnh sau Module 1 và tự chuẩn bị đầu vào theo cấu hình đã huấn luyện. "
+               "Confidence chưa được hiệu chỉnh giống nhau nên không dùng để tự chọn mô hình thắng.")
+    return records
 
 
 @st.cache_data
@@ -139,12 +172,20 @@ def probability_chart(prediction: Prediction, classes: list[str]):
 def main():
     st.set_page_config(page_title="WasteLens", page_icon="♻️", layout="wide")
     st.title("WasteLens · Phân loại rác 6 lớp")
-    st.caption("Ensemble 10 MLP train từ đầu trên descriptor HOG + HSV + Lab và HSV · không dùng trọng số pretrained")
+    st.caption("Từ mạng Lab 2 đến phân loại rác: baseline, MLP cải tiến và MobileNetV3 fine-tuning.")
 
-    if not DEFAULT_CHECKPOINT.is_file():
-        st.error(f"Không tìm thấy model tại `{DEFAULT_CHECKPOINT}`. Chép `wastelens-ensemble.pt` vào thư mục `models/`.")
+    st.sidebar.header("Mô hình phân loại")
+    model_keys = list(MODEL_PROFILES)
+    model_key = st.sidebar.selectbox("Chọn mô hình", model_keys, index=model_keys.index(DEFAULT_MODEL),
+                                     format_func=lambda key: MODEL_PROFILES[key].name, key="model_key")
+    profile = MODEL_PROFILES[model_key]
+    st.sidebar.caption(profile.training)
+    st.sidebar.caption(profile.description)
+    if not profile.checkpoint.is_file():
+        st.error(f"Không tìm thấy `{profile.checkpoint}`. Chạy `python scripts/prepare_app_models.py` "
+                 "sau khi tải checkpoint; xem hướng dẫn trong `docs/app-models.md`.")
         st.stop()
-    model = load_model()
+    model = profile_model(model_key)
     params = module1_controls()
 
     # ------------------------------------------------------------------ input
@@ -176,26 +217,33 @@ def main():
 
     # --------------------------------------------------------------- Module 2
     st.header("Module 2 · Dự đoán")
+    st.caption(profile.name + " · " + profile.training)
     prediction = model.classify(processed)
     original = model.classify(image) if changed else prediction
     result, chart = st.columns([2, 3])
     with result:
-        st.metric("Top-1", display_label(prediction),
-                  help=f"Dưới ngưỡng {model.threshold:.0%} confidence thì hiển thị “Không chắc”")
-        st.metric("Confidence (đã hiệu chỉnh)", f"{prediction.confidence:.1%}")
+        st.metric("Kết quả", display_label(prediction),
+                  help=(f"Dưới ngưỡng {model.threshold:.1%} confidence thì hiển thị “Không chắc”" if model.calibrated
+                        else "Hiển thị lớp có xác suất softmax cao nhất; chưa thiết lập ngưỡng từ chối."))
+        st.metric("Confidence (đã hiệu chỉnh)" if model.calibrated else "Confidence (softmax)",
+                  f"{prediction.confidence:.1%}")
         if prediction.uncertain:
             st.warning(f"Gần nhất: **{LABELS_VI[prediction.top_class]}** ({prediction.confidence:.0%}). "
                        "Model không đủ chắc chắn; hãy chụp lại rõ hơn.")
         else:
             st.success(f"Gợi ý: **{BIN_VI[prediction.label]}**")
-        # Total covers the whole pipeline: Module 1, descriptor extraction and the ensemble.
-        timing = {"Module 1": ops_ms, "Đặc trưng": prediction.timings_ms["features"],
+        # Total covers Module 1, the selected model's preprocessing and its forward pass.
+        timing = {"Module 1": ops_ms, "Chuẩn bị đầu vào": prediction.timings_ms["features"],
                   "Model": prediction.timings_ms["model"], "Tổng": ops_ms + prediction.timings_ms["total"]}
         st.caption("Thời gian xử lý (ms): " + " · ".join(f"{key} {value:.1f}" for key, value in timing.items()))
         if changed:
             st.caption(f"Trên ảnh gốc: {display_label(original)} {original.confidence:.0%}")
     with chart:
         probability_chart(prediction, model.classes)
+
+    comparisons = {}
+    if st.toggle("So sánh cả 3 mô hình trên ảnh này", key="compare_models"):
+        comparisons = comparison_table(processed, model_key, prediction)
 
     # --------------------------------------------------------- snapshot & export
     st.header("Snapshot & export")
@@ -206,17 +254,20 @@ def main():
         "module1": changed, "prediction": {
             "label": prediction.label, "top_class": prediction.top_class, "confidence": prediction.confidence,
             "probabilities": prediction.probabilities, "uncertain_threshold": model.threshold,
+            "calibrated": model.calibrated,
         },
         "original_prediction": {"label": original.label, "confidence": original.confidence},
-        "timings_ms": timing, "model": DEFAULT_CHECKPOINT.name,
+        "timings_ms": timing, "model": profile.filename,
+        "model_details": {"id": model_key, "name": profile.name, "training": profile.training},
+        "comparisons": comparisons,
     }
     preview, buttons = st.columns([3, 2])
     preview.image(annotated, channels="BGR", caption="Ảnh kết quả", width="stretch")
     ok, png = cv2.imencode(".png", annotated)
-    buttons.download_button("Tải ảnh kết quả (PNG)", png.tobytes() if ok else b"", f"wastelens-{stamp}.png",
+    buttons.download_button("Tải ảnh kết quả (PNG)", png.tobytes() if ok else b"", f"wastelens-{model_key}-{stamp}.png",
                             "image/png", width="stretch", disabled=not ok)
     buttons.download_button("Tải kết quả (JSON)", json.dumps(record, ensure_ascii=False, indent=2).encode("utf-8"),
-                            f"wastelens-{stamp}.json", "application/json", width="stretch")
+                            f"wastelens-{model_key}-{stamp}.json", "application/json", width="stretch")
     ok, processed_png = cv2.imencode(".png", processed)
     buttons.download_button("Tải ảnh đã xử lý (không chú thích)", processed_png.tobytes() if ok else b"",
                             f"wastelens-{stamp}-processed.png", "image/png", width="stretch", disabled=not ok)

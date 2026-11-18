@@ -1,6 +1,6 @@
 # WasteLens · Lab03
 
-WasteLens is a six-class waste classification project for Digital Image & Video Processing Lab03. The current focus is improving the Horse or Human MLP from Lab02 through controlled, from-scratch experiments. Earlier ImageNet-pretrained CNN experiments remain available for later comparison.
+WasteLens is a six-class waste classification project for Digital Image & Video Processing Lab03. It extends the Horse or Human MLP from Lab02 through from-scratch experiments. The app offers the adapted baseline, the improved MLP ensemble and an ImageNet-pretrained MobileNetV3 Large fine-tuned for comparison.
 
 ## Run locally
 
@@ -46,23 +46,42 @@ The [input experiments](https://www.kaggle.com/code/luquang231/wastelens-lab03-i
 
 ## Run the app
 
-The Streamlit app needs the deployed checkpoint at `models/wastelens-ensemble.pt`. The file is git-ignored; copy it from the shared Drive folder or write one with `python -m wastelens.cv export`.
+The Streamlit app offers three independently selectable checkpoints. Model weights are git-ignored. After downloading the original experiment outputs, install the verified checkpoints with the command below; see [model provenance and comparison](docs/app-models.md) for exact paths, hashes and training settings.
 
 ```powershell
+.\.venv\Scripts\python.exe scripts/prepare_app_models.py
 .\.venv\Scripts\python.exe -m streamlit run app/app.py
 ```
+
+| Model | Local checkpoint | Test accuracy (377 images) |
+| --- | --- | ---: |
+| Baseline: Lab02 MLP 128 → 32 → 6, RGB pixels, from scratch | `models/wastelens-baseline.pt` | 58.62% |
+| Improved: 10 descriptor MLPs 256 → 64 → 32 → 6, from scratch | `models/wastelens-ensemble.pt` | 85.68% |
+| MobileNetV3 Large, ImageNet pretrained then fine-tuned | `models/wastelens-mobilenetv3.pt` | 94.69% |
+
+The improved MLP is the default. Select a model in the sidebar, or enable **So sánh cả 3 mô hình trên ảnh này** to see their independent predictions on the same processed image. Switching models also changes the snapshot and JSON export. The app never chooses a winner by comparing confidence values. A missing optional checkpoint does not block the selected available model.
+
+These are exploratory results from existing experiments: baseline/MobileNet train on 1,764 images with a separate 380-image validation split, while the improved ensemble is refitted on all 2,144 development images after cross-validation. The table is not a controlled comparison with identical training budgets. All scores use the same fixed test set, including predictions below the ensemble's uncertainty threshold.
 
 The image mode accepts a JPG or PNG upload, or a held-out TrashNet test image when `data/trashnet/` has been prepared.
 
 | Part | What it does |
 | --- | --- |
 | Module 1 (sidebar) | Color: gamma, contrast and brightness, HSV hue/saturation/value, CLAHE, grayscale. Geometry: rotation, scale, flips, center crop. Smoothing: Gaussian, median, bilateral. Optional synthetic Gaussian and salt-and-pepper noise. Original and processed images appear side by side. |
-| Module 2 | Prediction on the processed image: top-1 label, calibrated confidence and a bar chart of all six classes. Shows *uncertain* below the stored threshold. Times Module 1, descriptor extraction and the ensemble separately. When Module 1 is active, also shows the prediction on the original image. |
-| Snapshot & export | Downloads the annotated result PNG, the processed PNG and a JSON record of the settings, prediction and timings. |
+| Module 2 | Prediction from the selected model: label, confidence and all six class probabilities. Only the improved ensemble uses calibrated confidence and its stored *uncertain* threshold; baseline/MobileNet show raw softmax confidence. Times Module 1, input preparation and the model separately. When Module 1 is active, also shows the prediction on the original image. Optional three-model comparison table. |
+| Snapshot & export | Downloads the annotated result PNG, the processed PNG and a JSON record of the selected model, settings, predictions and timings, including all three results when comparison is enabled. |
 
 The operations live in [`wastelens.ops`](src/wastelens/ops.py) as functions from a BGR image to a BGR image, so video, webcam and the filter experiment can reuse them. Uploads larger than 1024 px on the long side are downscaled first.
 
 The calibrated confidence is reliable only for photos like TrashNet's. Shifting the hue of a held-out cardboard photo by 40 OpenCV units flips the prediction to glass at 97% confidence. Random-noise images can also receive confident labels.
+
+To reproduce the deployed models' test scores and check that PIL/OpenCV inputs agree:
+
+```powershell
+.\.venv\Scripts\python.exe scripts/evaluate_app_models.py
+```
+
+This writes `outputs/app-model-comparison.json` with hashes, confusion matrices and per-image probabilities. It does not train or tune models on test images.
 
 ## Pretrained backbones
 

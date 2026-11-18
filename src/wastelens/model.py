@@ -229,16 +229,23 @@ def load_classifier(path: Path, device: torch.device | str = "cpu") -> tuple[nn.
     return model.to(device).eval(), classes
 
 
-@torch.inference_mode()
-def predict_probabilities(model: nn.Module, image: Image.Image) -> torch.Tensor:
-    """Return a CPU probability vector in the checkpoint's class order."""
+def prepare_classifier_input(model: nn.Module, image: Image.Image) -> torch.Tensor | dict[str, torch.Tensor]:
+    """Use the checkpoint's training representation and move inputs to its device."""
+    device = next(model.parameters()).device
     if isinstance(model, DescriptorEnsemble):
-        return model(model.describe(image)).squeeze(0).cpu()
+        return {key: value.to(device) for key, value in model.describe(image).items()}
     representation = getattr(model, "feature_representation", "pixels")
     if representation != "pixels":
         from .features import image_descriptor
         inputs = torch.from_numpy(image_descriptor(image, representation)).unsqueeze(0)
     else:
         inputs = preprocess(image, model.image_size).unsqueeze(0)
-    device = next(model.parameters()).device
-    return model(inputs.to(device)).softmax(dim=1).squeeze(0).cpu()
+    return inputs.to(device)
+
+
+@torch.inference_mode()
+def predict_probabilities(model: nn.Module, image: Image.Image) -> torch.Tensor:
+    """Return a CPU probability vector in the checkpoint's class order."""
+    output = model(prepare_classifier_input(model, image))
+    probabilities = output if isinstance(model, DescriptorEnsemble) else output.softmax(dim=1)
+    return probabilities.squeeze(0).cpu()

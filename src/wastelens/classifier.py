@@ -1,4 +1,4 @@
-"""Application-facing inference: load the deployed ensemble and classify images or OpenCV frames."""
+"""Application inference for the baseline MLP, improved MLP ensemble and MobileNet."""
 
 import time
 from dataclasses import dataclass, field
@@ -8,9 +8,10 @@ import numpy as np
 import torch
 from PIL import Image
 
-from .model import DescriptorEnsemble, load_classifier
+from .model import DescriptorEnsemble, load_classifier, prepare_classifier_input
+from .profiles import DEFAULT_MODEL, MODEL_PROFILES
 
-DEFAULT_CHECKPOINT = Path(__file__).resolve().parents[2] / "models" / "wastelens-ensemble.pt"
+DEFAULT_CHECKPOINT = MODEL_PROFILES[DEFAULT_MODEL].checkpoint
 UNCERTAIN = "uncertain"
 
 
@@ -18,7 +19,7 @@ UNCERTAIN = "uncertain"
 class Prediction:
     label: str                      # Top-1 class, or "uncertain" below the calibrated threshold.
     top_class: str                  # Top-1 class even when the prediction is uncertain.
-    confidence: float               # Calibrated top-1 probability in [0, 1].
+    confidence: float               # Top-1 probability in [0, 1]; calibration depends on the model.
     probabilities: dict[str, float]  # Every class, in checkpoint order.
     timings_ms: dict[str, float] = field(default_factory=dict)  # Per stage, plus "total".
 
@@ -47,9 +48,9 @@ class WasteClassifier:
 
     def __init__(self, checkpoint: Path = DEFAULT_CHECKPOINT, device: str = "cpu", warm_up: int = 3):
         self.model, self.classes = load_classifier(Path(checkpoint), device)
-        if not isinstance(self.model, DescriptorEnsemble):
-            raise TypeError("Expected a descriptor-ensemble checkpoint written by `wastelens.cv export`")
-        self.threshold = self.model.uncertain_threshold
+        self.calibrated = isinstance(self.model, DescriptorEnsemble)
+        self.threshold = self.model.uncertain_threshold if self.calibrated else 0.0
+        self.device = next(self.model.parameters()).device
         # The first calls allocate memory and pick kernels; keep them out of reported timings.
         blank = Image.new("RGB", (512, 384), "white")
         for _ in range(warm_up):
@@ -59,9 +60,12 @@ class WasteClassifier:
     def classify(self, image: Image.Image | np.ndarray) -> Prediction:
         started = time.perf_counter()
         rgb = to_pil(image)
-        descriptors = self.model.describe(rgb)
+        inputs = prepare_classifier_input(self.model, rgb)
+        if self.device.type == "cuda":
+            torch.cuda.synchronize(self.device)
         described = time.perf_counter()
-        probabilities = self.model(descriptors).squeeze(0).cpu().numpy()
+        output = self.model(inputs)
+        probabilities = (output if self.calibrated else output.softmax(dim=1)).squeeze(0).cpu().numpy()
         finished = time.perf_counter()
         index = int(probabilities.argmax())
         confidence = float(probabilities[index])
