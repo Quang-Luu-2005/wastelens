@@ -42,16 +42,17 @@ class UploadUITests(unittest.TestCase):
         original_download = DeltaGenerator.download_button
 
         def capture_download(element, label, data, *args, **kwargs):
-            if label == "Tải kết quả (JSON)":
+            if label == "Tải JSON":
                 records.append(json.loads(data))
             return original_download(element, label, data, *args, **kwargs)
 
         with patch("streamlit.file_uploader", return_value=upload(encoded.getvalue(), "valid.png")), \
              patch.object(DeltaGenerator, "download_button", capture_download):
             app.run()
+            self.assertEqual(len(records), 0)  # Selecting a file previews it; inference is explicit.
+            app.button(key="run_inference").click().run()
         self.assertFalse(app.exception)
         self.assertFalse(app.error)
-        self.assertEqual(len(app.metric), 2)
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["source"], "valid.png")
         self.assertEqual(len(records[0]["prediction"]["probabilities"]), 6)

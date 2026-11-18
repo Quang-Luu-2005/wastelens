@@ -59,7 +59,11 @@ The Streamlit app offers three independently selectable checkpoints. Model weigh
 | Improved: 10 descriptor MLPs 256 → 64 → 32 → 6, from scratch | `models/wastelens-ensemble.pt` | 85.68% |
 | MobileNetV3 Large, ImageNet pretrained then fine-tuned | `models/wastelens-mobilenetv3.pt` | 94.69% |
 
-The improved MLP is the default. Select a model in the sidebar, or enable **So sánh cả 3 mô hình trên ảnh này** to see their independent predictions on the same processed image. Switching models also changes the snapshot and JSON export. The app never chooses a winner by comparing confidence values. A missing optional checkpoint does not block the selected available model.
+The centered image workbench follows the supplied Stitch design. Upload an image or choose one of the six sample buttons, then select the model and processing level in the compact toolbar below the image. The improved MLP is the default. Click **Phân loại** to run inference; changing the image, model, settings or checkpoint invalidates the previous result and its downloads until you classify again.
+
+Processing levels are **Gốc** (identity), **Nhẹ** (Gaussian σ=0.4), **Vừa** (gamma 1.15, CLAHE 2.0, Gaussian σ=0.8), and **Mạnh** (gamma 1.25, contrast 1.15, CLAHE 3.0, Gaussian σ=1.2). They are experimental filter presets, not quality guarantees. **Chỉnh sửa** opens the full Module 1 dialog; settings take effect only after **Áp dụng**. Preview modes show the original, processed image or both side by side.
+
+Enable **So sánh cả 3 mô hình trên ảnh này** after inference to compare independent predictions on the same processed image. The app never chooses a winner by comparing confidence values. A missing optional checkpoint does not block the selected available model. The interface shows actual probabilities and timings; the reference design's sample scores, Platt calibration and CUDA/ONNX labels are not used. Video and webcam remain unimplemented and are identified as such in the source menu.
 
 These are exploratory results from existing experiments: baseline/MobileNet train on 1,764 images with a separate 380-image validation split, while the improved ensemble is refitted on all 2,144 development images after cross-validation. The table is not a controlled comparison with identical training budgets. All scores use the same fixed test set, including predictions below the ensemble's uncertainty threshold.
 
@@ -67,8 +71,8 @@ The image mode accepts a JPG or PNG upload, or a held-out TrashNet test image wh
 
 | Part | What it does |
 | --- | --- |
-| Module 1 (sidebar) | Color: gamma, contrast and brightness, HSV hue/saturation/value, CLAHE, grayscale. Geometry: rotation, scale, flips, center crop. Smoothing: Gaussian, median, bilateral. Optional synthetic Gaussian and salt-and-pepper noise. Original and processed images appear side by side. |
-| Module 2 | Prediction from the selected model: label, confidence and all six class probabilities. Only the improved ensemble uses calibrated confidence and its stored *uncertain* threshold; baseline/MobileNet show raw softmax confidence. Times Module 1, input preparation and the model separately. When Module 1 is active, also shows the prediction on the original image. Optional three-model comparison table. |
+| Module 1 (presets and custom dialog) | Color: gamma, contrast and brightness, HSV hue/saturation/value, CLAHE, grayscale. Geometry: rotation, scale, flips, center crop. Smoothing: Gaussian, median, bilateral. Optional synthetic Gaussian and salt-and-pepper noise. Original/processed/side-by-side preview modes. |
+| Module 2 | Explicit inference from the selected model: label, confidence and all six probabilities in a table with proportional bars. Only the improved ensemble uses calibrated confidence and its stored *uncertain* threshold; baseline/MobileNet show raw softmax confidence. Times Module 1, input preparation and the model separately. When Module 1 is active, also shows the prediction on the original image. Optional three-model comparison table. |
 | Snapshot & export | Downloads the annotated result PNG, the processed PNG and a JSON record of the selected model, settings, predictions and timings, including all three results when comparison is enabled. |
 
 The operations live in [`wastelens.ops`](src/wastelens/ops.py) as functions from a BGR image to a BGR image, so video, webcam and the filter experiment can reuse them. Uploads larger than 1024 px on the long side are downscaled first.
@@ -82,6 +86,12 @@ To reproduce the deployed models' test scores and check that PIL/OpenCV inputs a
 ```
 
 This writes `outputs/app-model-comparison.json` with hashes, confusion matrices and per-image probabilities. It does not train or tune models on test images.
+
+UI regression checks (the inference tests require the installed checkpoints):
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
 
 ## Pretrained backbones
 
