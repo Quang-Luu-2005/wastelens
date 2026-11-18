@@ -21,6 +21,14 @@ PRESET_DESCRIPTIONS = {
 }
 
 
+def assess_prediction(top_class: str, uncertain: bool, ground_truth: str | None) -> dict:
+    """Keep Top-1 correctness separate from the classifier's decision to abstain."""
+    correct = top_class == ground_truth if ground_truth is not None else None
+    status = ("unlabeled" if ground_truth is None else "uncertain" if uncertain
+              else "correct" if correct else "incorrect")
+    return {"status": status, "top1_correct": correct, "accepted": not uncertain}
+
+
 def request_signature(image_bytes: bytes, params: OpsParams, model_key: str, checkpoint_version: int) -> str:
     """Bind a result to the exact input, processing settings and versioned model file."""
     settings = json.dumps({"params": asdict(params), "model": model_key, "version": checkpoint_version},

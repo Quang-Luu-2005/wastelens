@@ -4,6 +4,7 @@ Run from the repository root: streamlit run app/app.py
 """
 
 import hashlib
+import csv
 import io
 import json
 import time
@@ -21,7 +22,7 @@ from PIL import Image, ImageOps
 from wastelens import ops
 from wastelens.classifier import Prediction, WasteClassifier
 from wastelens.profiles import DEFAULT_MODEL, MODEL_PROFILES
-from wastelens.workbench import PRESETS, PRESET_DESCRIPTIONS, describe_operations, request_signature
+from wastelens.workbench import PRESETS, PRESET_DESCRIPTIONS, assess_prediction, describe_operations, request_signature
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_SIDE = 1024
@@ -40,6 +41,7 @@ CLASS_COLORS = {
     "paper": "#6366f1", "plastic": "#059669", "trash": "#e11d48",
 }
 UPLOAD_ERROR = "Không đọc được ảnh. Vui lòng chọn lại tệp JPG hoặc PNG hợp lệ."
+ASSESSMENT_LABELS = {"unlabeled": "Chưa có nhãn thật", "correct": "Đúng", "incorrect": "Sai", "uncertain": "Không chắc"}
 
 
 @st.cache_resource(show_spinner="Đang nạp mô hình…")
@@ -54,15 +56,17 @@ def profile_model(key: str) -> WasteClassifier:
 
 
 @st.cache_data
-def sample_images() -> dict[str, Path]:
+def sample_catalog() -> dict[str, list[Path]]:
+    """Use labels from the versioned manifest; only held-out test images are offered."""
     manifest, image_root = ROOT / "data/splits/trashnet.csv", ROOT / "data/trashnet"
     if not manifest.is_file() or not image_root.is_dir():
         return {}
     samples = {}
-    for line in manifest.read_text(encoding="utf-8").splitlines()[1:]:
-        path, label, _, split = line.split(",")[:4]
-        if split == "test" and label not in samples and (image_root / path).is_file():
-            samples[label] = image_root / path
+    with manifest.open(encoding="utf-8", newline="") as file:
+        for row in csv.DictReader(file):
+            path, label = image_root / row["path"], row["label"]
+            if row["split"] == "test" and label in CLASS_COLORS and path.is_file():
+                samples.setdefault(label, []).append(path)
     return samples
 
 
@@ -85,7 +89,8 @@ def decode_image(data: bytes) -> tuple[np.ndarray, tuple[int, int]]:
 
 
 def init_state():
-    defaults = {"input_bytes": None, "input_name": "", "sample_label": None, "upload_revision": 0,
+    defaults = {"input_bytes": None, "input_name": "", "sample_label": None, "sample_path": None,
+                "manual_truth": None, "upload_revision": 0,
                 "last_upload": None, "ops_params": asdict(ops.OpsParams()), "processing_level": "Gốc",
                 "result": None, "image_view": "Ảnh gốc"}
     for key, value in defaults.items():
@@ -93,20 +98,23 @@ def init_state():
 
 
 def clear_image():
-    st.session_state.update(input_bytes=None, input_name="", sample_label=None,
+    st.session_state.update(input_bytes=None, input_name="", sample_label=None, sample_path=None, manual_truth=None,
                             upload_revision=st.session_state.upload_revision + 1, result=None)
 
 
 def choose_sample(label: str, path: Path):
     st.session_state.update(input_bytes=path.read_bytes(), input_name=path.name, sample_label=label,
+                            sample_path=path.relative_to(ROOT / "data/trashnet").as_posix(), manual_truth=None,
                             upload_revision=st.session_state.upload_revision + 1)
+    st.session_state.dataset_browser = False
 
 
 def accept_upload(widget_key: str):
     file = st.session_state.get(widget_key)
     if file is not None:
         data = file.getvalue()
-        st.session_state.update(input_bytes=data, input_name=file.name, sample_label=None,
+        st.session_state.update(input_bytes=data, input_name=file.name, sample_label=None, sample_path=None,
+                                manual_truth=None,
                                 last_upload=(hashlib.sha256(data).hexdigest(), file.name, widget_key))
 
 
@@ -119,7 +127,44 @@ def file_picker():
         marker = (hashlib.sha256(data).hexdigest(), upload.name, key)
         # Also supports integrations that supply the file directly rather than via a callback.
         if marker != st.session_state.last_upload:
-            st.session_state.update(input_bytes=data, input_name=upload.name, sample_label=None, last_upload=marker)
+            st.session_state.update(input_bytes=data, input_name=upload.name, sample_label=None, sample_path=None,
+                                    manual_truth=None, last_upload=marker)
+
+
+def ground_truth() -> dict:
+    """Reference labels are only for evaluation and are never classifier inputs."""
+    dataset_label = st.session_state.sample_label
+    label = dataset_label or st.session_state.manual_truth
+    return {"label": label, "source": "dataset" if dataset_label else "manual" if label else None,
+            "path": st.session_state.sample_path if dataset_label else None}
+
+
+def render_truth_input():
+    truth = ground_truth()
+    if truth["source"] == "dataset":
+        st.html(f'<div class="ground-truth-label">Nhãn thật: <strong>{LABELS_VI[truth["label"]]}</strong>'
+                '<span>Từ nhãn dataset · tập test</span></div>')
+    else:
+        st.selectbox("Nhãn thật (tùy chọn)", list(CLASS_COLORS), index=None, key="manual_truth",
+                     format_func=lambda label: LABELS_VI[label], placeholder="Chưa biết nhãn thật",
+                     help="Chọn nhãn bạn biết để đối chiếu đúng/sai. Nhãn này không được dùng để dự đoán.")
+
+
+def render_assessment(prediction: Prediction):
+    truth = ground_truth()
+    assessment = assess_prediction(prediction.top_class, prediction.uncertain, truth["label"])
+    status = assessment["status"]
+    if truth["label"] is None:
+        details = "Chọn nhãn thật dưới ảnh để đối chiếu dự đoán đúng hay sai."
+    else:
+        details = (f'Nhãn thật: <strong>{LABELS_VI[truth["label"]]}</strong> · '
+                   f'Top-1: <strong>{LABELS_VI[prediction.top_class]}</strong>')
+        if prediction.uncertain:
+            details += " · Top-1 " + ("trùng" if assessment["top1_correct"] else "khác") + " nhãn thật; mô hình chưa chốt."
+    provenance = {"dataset": "Nhãn từ dataset · tập test", "manual": "Nhãn do bạn cung cấp", None: "Chưa có nhãn đối chiếu"}
+    st.html(f'<section class="assessment {status}"><div><small>ĐỐI CHIẾU NHÃN THẬT</small>'
+            f'<p>{details}</p><span>{provenance[truth["source"]]}</span></div>'
+            f'<strong class="assessment-badge">{ASSESSMENT_LABELS[status]}</strong></section>')
 
 
 def choose_preset(name: str):
@@ -265,15 +310,26 @@ def render_viewer():
             if max(original_size) > MAX_SIDE:
                 metadata += f' <span>· Xử lý ở {image.shape[1]} × {image.shape[0]} px</span>'
             st.html(f'<div class="file-metadata">{metadata}</div>')
-        samples = sample_images()
+            render_truth_input()
+        samples = sample_catalog()
         if samples:
             with st.container(key="sample_strip"):
-                st.caption("THỬ ẢNH MẪU")
-                columns = st.columns(len(samples))
-                for column, (label, path) in zip(columns, samples.items(), strict=True):
-                    column.button(LABELS_VI[label], key=f"sample_{label}", on_click=choose_sample,
-                                  args=(label, path), width="stretch",
-                                  type="primary" if st.session_state.sample_label == label else "secondary")
+                caption, browse = st.columns([2, 2], vertical_alignment="center")
+                caption.caption("THỬ ẢNH MẪU · TẬP TEST")
+                with browse.popover("Chọn ảnh trong tập test", icon=":material/photo_library:", width="stretch",
+                                    key="dataset_browser", on_change="rerun"):
+                    choices = [(label, path) for label, paths in samples.items() for path in paths]
+                    st.caption(f"{len(choices)} ảnh có nhãn thật từ manifest dataset.")
+                    selected = st.selectbox("Ảnh trong tập test", choices, key="dataset_image",
+                                            format_func=lambda item: f"{LABELS_VI[item[0]]} · {item[1].name}")
+                    st.button("Dùng ảnh này", key="use_dataset_image", on_click=choose_sample,
+                              args=selected, width="stretch", type="primary")
+                with st.container(key="sample_buttons"):
+                    columns = st.columns(len(samples))
+                    for column, (label, paths) in zip(columns, samples.items(), strict=True):
+                        column.button(LABELS_VI[label], key=f"sample_{label}", on_click=choose_sample,
+                                      args=(label, paths[0]), width="stretch",
+                                      type="primary" if st.session_state.sample_label == label else "secondary")
     return image, processed, params, ops_ms
 
 
@@ -286,7 +342,7 @@ def file_picker_empty():
         marker = (hashlib.sha256(upload.getvalue()).hexdigest(), upload.name, key)
         if marker != st.session_state.last_upload:
             st.session_state.update(input_bytes=upload.getvalue(), input_name=upload.name, sample_label=None,
-                                    last_upload=marker)
+                                    sample_path=None, manual_truth=None, last_upload=marker)
             st.rerun()
 
 
@@ -332,18 +388,24 @@ def render_toolbar(has_image: bool):
     return key, run, available
 
 
-def annotate(image: np.ndarray, prediction: Prediction) -> np.ndarray:
+def annotate(image: np.ndarray, prediction: Prediction, true_label: str | None = None) -> np.ndarray:
     """OpenCV's built-in font uses ASCII; metadata in JSON retains Vietnamese labels."""
     out = image.copy()
     text = (f"uncertain (closest: {prediction.top_class} {prediction.confidence:.0%})" if prediction.uncertain
             else f"{prediction.label} {prediction.confidence:.0%}")
-    scale = max(0.4, min(out.shape[1] / max(len(text) * 12, 1), out.shape[0] / 60, 1.0))
+    lines = [text]
+    if true_label is not None:
+        lines.append(f"truth: {true_label} | top1: {'correct' if prediction.top_class == true_label else 'incorrect'}")
+    scale = max(0.3, min(out.shape[1] / max(max(map(len, lines)) * 12, 1), out.shape[0] / (60 * len(lines)), 1.0))
     thickness = max(1, round(scale * 2))
-    (width, height), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, thickness)
-    cv2.rectangle(out, (0, 0), (width + 16, height + baseline + 16),
-                  (0, 165, 255) if prediction.uncertain else (95, 104, 0), -1)
-    cv2.putText(out, text, (8, height + 8), cv2.FONT_HERSHEY_SIMPLEX, scale,
-                (255, 255, 255), thickness, cv2.LINE_AA)
+    sizes = [cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, scale, thickness) for line in lines]
+    pitch = max(height + baseline for (_, height), baseline in sizes) + 10
+    color = ((0, 165, 255) if prediction.uncertain else (60, 60, 185)
+             if true_label is not None and prediction.top_class != true_label else (95, 104, 0))
+    cv2.rectangle(out, (0, 0), (max(size[0][0] for size in sizes) + 16, pitch * len(lines) + 8), color, -1)
+    for index, (line, ((_, height), _)) in enumerate(zip(lines, sizes, strict=True)):
+        cv2.putText(out, line, (8, height + 8 + index * pitch), cv2.FONT_HERSHEY_SIMPLEX, scale,
+                    (255, 255, 255), thickness, cv2.LINE_AA)
     return out
 
 
@@ -383,6 +445,7 @@ def probability_table(prediction: Prediction | None):
 
 def compare_models(bundle):
     rows = []
+    truth = ground_truth()["label"]
     for key, profile in MODEL_PROFILES.items():
         if not profile.checkpoint.is_file():
             st.warning(f"Thiếu checkpoint: {MODEL_NAMES[key]}")
@@ -399,7 +462,12 @@ def compare_models(bundle):
                 "probabilities": prediction.probabilities, "timings_ms": prediction.timings_ms,
             }
             bundle["comparisons"][key] = cached
-        rows.append({"Mô hình": MODEL_NAMES[key], "Kết quả": LABELS_VI[cached["label"]],
+        assessment = assess_prediction(cached["top_class"], cached["label"] == "uncertain", truth)
+        verdict = ASSESSMENT_LABELS[assessment["status"]]
+        if assessment["status"] == "uncertain":
+            verdict += " · Top-1 " + ("đúng" if assessment["top1_correct"] else "sai")
+        rows.append({"Mô hình": MODEL_NAMES[key], "Nhãn thật": LABELS_VI[truth] if truth else "Chưa biết",
+                     "Đối chiếu": verdict, "Kết quả": LABELS_VI[cached["label"]],
                      "Lớp cao nhất": LABELS_VI[cached["top_class"]], "Confidence (%)": round(cached["confidence"] * 100, 2),
                      "Confidence": "Đã hiệu chỉnh" if cached["calibrated"] else "Softmax",
                      "Thời gian (ms)": round(cached["timings_ms"]["total"], 2)})
@@ -430,6 +498,7 @@ def render_result(signature: str | None):
             f'<p>Mô hình: <strong>{MODEL_NAMES[key]}</strong> · Suy luận: {prediction.timings_ms["total"]:.1f} ms</p>'
             f'<p>Gợi ý: {suggestion}</p></div><div class="confidence"><strong>{prediction.confidence:.1%}</strong>'
             f'<span>{confidence_kind}</span></div></div>')
+        render_assessment(prediction)
         if prediction.uncertain:
             st.caption(f"Lớp gần nhất: {LABELS_VI[prediction.top_class]} · Ngưỡng không chắc {bundle['threshold']:.1%}.")
         if ops.OpsParams(**bundle["params"]).changed():
@@ -451,6 +520,11 @@ def render_result(signature: str | None):
 def render_exports(bundle, include_comparisons: bool):
     prediction, original = bundle["prediction"], bundle["original"]
     key, profile = bundle["model_key"], MODEL_PROFILES[bundle["model_key"]]
+    truth = ground_truth()
+    comparisons = {
+        model_key: {**result, "evaluation": assess_prediction(result["top_class"], result["label"] == "uncertain", truth["label"])}
+        for model_key, result in bundle["comparisons"].items()
+    } if include_comparisons else {}
     record = {
         "time": bundle["time"], "source": bundle["name"],
         "module1": ops.OpsParams(**bundle["params"]).changed(),
@@ -461,12 +535,14 @@ def render_exports(bundle, include_comparisons: bool):
         "timings_ms": {"module1": bundle["ops_ms"], **prediction.timings_ms,
                        "pipeline_total": bundle["ops_ms"] + prediction.timings_ms["total"]},
         "model": profile.filename, "model_details": {"id": key, "name": profile.name, "training": profile.training},
-        "comparisons": bundle["comparisons"] if include_comparisons else {},
+        "ground_truth": truth,
+        "evaluation": assess_prediction(prediction.top_class, prediction.uncertain, truth["label"]),
+        "comparisons": comparisons,
     }
     stamp = bundle["time"].replace(":", "").replace("-", "")
     with st.container(key="export_actions"):
         image_col, json_col, clean_col = st.columns(3)
-        ok, png = cv2.imencode(".png", annotate(bundle["processed"], prediction))
+        ok, png = cv2.imencode(".png", annotate(bundle["processed"], prediction, truth["label"]))
         image_col.download_button("Tải ảnh kết quả", png.tobytes() if ok else b"",
                                   f"wastelens-{key}-{stamp}.png", "image/png", disabled=not ok,
                                   icon=":material/download:", width="stretch", on_click="ignore")

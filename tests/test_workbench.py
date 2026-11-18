@@ -71,6 +71,9 @@ class WorkbenchUITests(unittest.TestCase):
             valid(app)
             self.assertEqual(set(records[-1]["comparisons"]), set(MODEL_PROFILES))
             self.assertEqual(len(app.dataframe[0].value), 3)
+            self.assertIn("Đối chiếu", app.dataframe[0].value.columns)
+            for comparison in records[-1]["comparisons"].values():
+                self.assertEqual(comparison["evaluation"]["top1_correct"], comparison["top_class"] == "cardboard")
 
             for key in ("baseline", "mobilenet"):
                 app.radio(key="model_key").set_value(key).run()

@@ -69,6 +69,8 @@ These are exploratory results from existing experiments: baseline/MobileNet trai
 
 The image mode accepts a JPG or PNG upload, or a held-out TrashNet test image when `data/trashnet/` has been prepared.
 
+Dataset samples display their ground-truth label from the versioned manifest. The six quick buttons and **Chọn ảnh trong tập test** offer the fixed 377-image test split. After classification, **Đối chiếu nhãn thật** shows correct/incorrect for an accepted prediction, or *uncertain* with a separate indication of whether Top-1 matches the label. An upload has no assumed label: optionally choose **Nhãn thật** yourself. Changing this reference label updates the comparison without rerunning or changing the model. JSON exports include label provenance and correctness for the selected model and any enabled comparisons; annotated PNGs include the reference label. These are per-image checks, not dataset accuracy.
+
 | Part | What it does |
 | --- | --- |
 | Module 1 (presets and custom dialog) | Color: gamma, contrast and brightness, HSV hue/saturation/value, CLAHE, grayscale. Geometry: rotation, scale, flips, center crop. Smoothing: Gaussian, median, bilateral. Optional synthetic Gaussian and salt-and-pepper noise. Original/processed/side-by-side preview modes. |
