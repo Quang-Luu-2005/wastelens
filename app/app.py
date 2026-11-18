@@ -7,6 +7,7 @@ import hashlib
 import csv
 import io
 import json
+import random
 import time
 from dataclasses import asdict
 from datetime import datetime
@@ -102,6 +103,18 @@ def choose_sample(label: str, path: Path):
                             sample_path=path.relative_to(ROOT / "data/trashnet").as_posix(),
                             upload_revision=st.session_state.upload_revision + 1)
     st.session_state.dataset_browser = False
+
+
+def choose_random_sample(label: str | None = None):
+    """Sample within the requested class, or across the entire test catalog."""
+    choices = [(name, path) for name, paths in sample_catalog().items()
+               if label is None or name == label for path in paths]
+    if not choices:
+        return
+    current_path = st.session_state.sample_path
+    alternatives = [(name, path) for name, path in choices
+                    if path.relative_to(ROOT / "data/trashnet").as_posix() != current_path]
+    choose_sample(*random.choice(alternatives or choices))
 
 
 def accept_upload(widget_key: str):
@@ -309,11 +322,14 @@ def render_viewer():
                     st.button("Dùng ảnh này", key="use_dataset_image", on_click=choose_sample,
                               args=selected, width="stretch", type="primary")
                 with st.container(key="sample_buttons"):
-                    columns = st.columns(len(samples))
-                    for column, (label, paths) in zip(columns, samples.items(), strict=True):
-                        column.button(LABELS_VI[label], key=f"sample_{label}", on_click=choose_sample,
-                                      args=(label, paths[0]), width="stretch",
+                    columns = st.columns(len(samples) + 1)
+                    for column, label in zip(columns[:-1], samples, strict=True):
+                        column.button(LABELS_VI[label], key=f"sample_{label}", on_click=choose_random_sample,
+                                      args=(label,), width="stretch", help=f"Ảnh ngẫu nhiên cùng loại: {LABELS_VI[label]}",
                                       type="primary" if st.session_state.sample_label == label else "secondary")
+                    columns[-1].button("Random rác", key="sample_random", on_click=choose_random_sample,
+                                       icon=":material/shuffle:", width="stretch",
+                                       help="Chọn ngẫu nhiên một ảnh test từ cả 6 loại rác.")
     return image, processed, params, ops_ms
 
 

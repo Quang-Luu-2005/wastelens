@@ -90,6 +90,7 @@ button[kind="secondary"]:hover { color: var(--wl-primary); border-color: #8cbbb7
 .st-key-sample_strip [data-testid="stCaptionContainer"] p { font: 10px ui-monospace, monospace; letter-spacing: .6px; }
 .st-key-sample_strip button { min-height: 30px; background: #f6f9ff; }
 .st-key-sample_strip button p { font-size: 11px; }
+.st-key-sample_random button { background: #e3f3ee; color: #00685f; border-color: #aed4cc; }
 .st-key-action_bar { padding: 9px; margin-top: 8px; border-radius: 16px; box-shadow: 0 3px 4px rgb(11 28 48 / 7%); }
 .st-key-action_bar [data-testid="stPopover"] > button { background: var(--wl-soft); border-color: transparent; }
 .st-key-action_bar button { border-radius: 9px; min-height: 42px; }
@@ -164,6 +165,7 @@ button[kind="secondary"]:hover { color: var(--wl-primary); border-color: #8cbbb7
   .st-key-viewer_header [data-testid="stColumn"]:first-child { grid-column: 1 / -1; }
   .st-key-sample_buttons [data-testid="stHorizontalBlock"] { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
   .st-key-sample_buttons [data-testid="stColumn"] { min-width: 0 !important; width: auto !important; }
+  .st-key-sample_buttons [data-testid="stColumn"]:last-child { grid-column: 1 / -1; }
   .st-key-action_bar [data-testid="stHorizontalBlock"] { display: grid; grid-template-columns: 1fr 1fr; }
   .st-key-action_bar [data-testid="stColumn"] { min-width: 0 !important; width: auto !important; }
   .st-key-action_bar button p { font-size: 11px; white-space: normal; }

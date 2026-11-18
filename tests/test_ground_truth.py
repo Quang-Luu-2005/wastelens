@@ -40,6 +40,28 @@ class AssessmentTests(unittest.TestCase):
 
 @unittest.skipUnless(DEFAULT_CHECKPOINT.is_file(), "Install the app checkpoint first")
 class GroundTruthUITests(unittest.TestCase):
+    def test_random_buttons_preserve_labels_and_do_not_repeat_current_image(self):
+        with (APP.parents[1] / "data/splits/trashnet.csv").open(encoding="utf-8", newline="") as file:
+            test_labels = {row["path"]: row["label"] for row in csv.DictReader(file) if row["split"] == "test"}
+        app = AppTest.from_file(str(APP), default_timeout=60).run()
+        for label in dict.fromkeys(test_labels.values()):
+            for _ in range(2):
+                previous = app.session_state["sample_path"]
+                app.button(key=f"sample_{label}").click().run()
+                self.assertFalse(app.exception)
+                chosen = app.session_state["sample_path"]
+                self.assertNotEqual(chosen, previous)
+                self.assertEqual(test_labels[chosen], label)
+                self.assertEqual(app.session_state["sample_label"], label)
+        for _ in range(4):
+            previous = app.session_state["sample_path"]
+            app.button(key="sample_random").click().run()
+            self.assertFalse(app.exception)
+            chosen = app.session_state["sample_path"]
+            self.assertNotEqual(chosen, previous)
+            self.assertEqual(test_labels[chosen], app.session_state["sample_label"])
+        self.assertIsNone(app.session_state["result"])
+
     def test_only_dataset_images_have_ground_truth(self):
         records = []
         original_download = DeltaGenerator.download_button
