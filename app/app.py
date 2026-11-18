@@ -197,7 +197,14 @@ def main():
         if upload is None:
             st.info("Tải một ảnh lên, hoặc chọn **Ảnh mẫu** để thử nhanh.")
             st.stop()
-        name, image = upload.name, to_bgr(Image.open(upload))
+        try:
+            # Decode pixels inside the guard too: truncated files can open but fail in convert().
+            with Image.open(upload) as uploaded_image:
+                image = to_bgr(uploaded_image)
+        except (OSError, ValueError, Image.DecompressionBombError):
+            st.error("Không đọc được ảnh. Vui lòng chọn lại tệp JPG hoặc PNG hợp lệ.")
+            st.stop()
+        name = upload.name
     else:
         choice = st.selectbox("Ảnh mẫu", list(samples))
         name = samples[choice].name

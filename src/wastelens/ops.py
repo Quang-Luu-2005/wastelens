@@ -29,7 +29,9 @@ def adjust_brightness_contrast(image: np.ndarray, contrast: float, brightness: f
     """Linear transform out = contrast * in + brightness, saturated to [0, 255]."""
     if contrast == 1 and brightness == 0:
         return image
-    return cv2.convertScaleAbs(image, alpha=contrast, beta=brightness)
+    # convertScaleAbs takes abs() before saturating, which brightens negative results.
+    adjusted = image.astype(np.float32) * contrast + brightness
+    return np.clip(np.rint(adjusted), 0, 255).astype(np.uint8)
 
 
 def shift_hsv(image: np.ndarray, hue_shift: int, saturation_scale: float, value_scale: float) -> np.ndarray:
