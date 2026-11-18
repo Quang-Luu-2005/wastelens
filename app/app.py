@@ -117,9 +117,12 @@ def render_webcam():
     preset = processing_col.selectbox("Xử lý vùng ảnh", list(PRESETS), key="camera_preset")
     with settings_col.popover("Thiết lập stream", width="stretch"):
         fps = st.slider("Khung hình phân tích / giây", 1, 5, 2, key="camera_fps")
+        analysis_size = st.selectbox("Độ phân giải phân tích (cạnh dài)", [640, 960, 1280], index=2,
+                                     format_func=lambda size: f"{size} px", key="camera_analysis_size")
         threshold = st.slider("Ngưỡng phát hiện vật", .2, .9, .45, .05, key="camera_threshold")
         max_objects = st.slider("Số vật tối đa mỗi khung", 1, 5, 3, key="camera_max_objects")
-        st.caption("Video xem trực tiếp; chỉ gửi khung tiếp theo khi xử lý xong khung trước.")
+        st.caption("Khung xem lấy độ phân giải cao theo camera thiết bị và giữ nguyên tỉ lệ. "
+                   "Giảm độ phân giải phân tích nếu AI xử lý chậm; chất lượng khung xem vẫn giữ nguyên.")
     if not DETECTOR_WEIGHTS.is_file():
         st.info("Cần tải bộ phát hiện vật trước khi bật webcam.")
         st.code(".venv\\Scripts\\python.exe scripts/prepare_detector.py", language="powershell")
@@ -136,7 +139,8 @@ def render_webcam():
             state["response"] = {**state["response"], "objects": []}
     assets = Path(__file__).with_name("camera")
     revision = tuple((assets / f"component.{kind}").stat().st_mtime_ns for kind in ("html", "css", "js"))
-    result = camera_component(revision)(data={"fps": fps, "response": state["response"], "selected": state["selected"]},
+    result = camera_component(revision)(data={"fps": fps, "analysisSize": analysis_size,
+                                            "response": state["response"], "selected": state["selected"]},
                                 key="live_camera", default={"frame": None, "event": None, "selection": None},
                                 on_frame_change=lambda: None, on_event_change=lambda: None,
                                 on_selection_change=lambda: None)
