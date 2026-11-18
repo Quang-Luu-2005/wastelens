@@ -75,8 +75,7 @@ button[kind="secondary"]:hover { color: var(--wl-primary); border-color: #8cbbb7
 .ground-truth-label span { color: #64748b; margin-left: 6px; font-size: 11px; }
 .assessment { display: flex; align-items: center; justify-content: space-between; gap: 15px;
   background: #f6f8fc; border: 1px solid #e1e8f2; border-radius: 9px; padding: 13px 15px; margin: 3px 0 7px; }
-.assessment small { font: 9px ui-monospace, monospace; letter-spacing: .7px; color: #52656d; }
-.assessment p { margin: 6px 0 4px; font-size: 12px; }
+.ground-truth-name { margin: 0 0 5px; font-size: 14px; }
 .assessment span { font-size: 10px; color: #64748b; }
 .assessment-badge { border-radius: 6px; font-size: 13px; white-space: nowrap; padding: 6px 10px;
   color: #475569; background: #e7edf6; }
@@ -119,9 +118,6 @@ button[kind="secondary"]:hover { color: var(--wl-primary); border-color: #8cbbb7
 .confidence span { display: block; margin-top: 6px; font-size: 10px; color: #516761; }
 .prediction-summary.uncertain { border-color: #ead5a5; background: #fffbef; }
 .prediction-summary.uncertain .confidence strong { background: #ffe3a7; color: #86520c; }
-.st-key-result_card [data-testid="stExpander"] { border: 0; }
-.st-key-result_card [data-testid="stExpander"] summary { padding-left: 0; }
-.st-key-result_card [data-testid="stExpander"] summary p { font-size: 11px; color: var(--wl-muted); }
 .distribution-title { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px;
   align-items: center; margin: 13px 0 10px; font: 10px ui-monospace, Consolas, monospace; }
 .distribution-title strong { font-weight: 600; letter-spacing: .7px; }

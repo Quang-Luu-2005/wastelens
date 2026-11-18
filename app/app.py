@@ -30,11 +30,6 @@ LABELS_VI = {
     "cardboard": "Bìa carton", "glass": "Thủy tinh", "metal": "Kim loại", "paper": "Giấy",
     "plastic": "Nhựa", "trash": "Rác khác", "uncertain": "Không chắc",
 }
-BIN_VI = {
-    "cardboard": "Thùng tái chế giấy", "paper": "Thùng tái chế giấy",
-    "glass": "Thùng tái chế thủy tinh", "metal": "Thùng tái chế kim loại",
-    "plastic": "Thùng tái chế nhựa", "trash": "Thùng rác thường",
-}
 MODEL_NAMES = {"baseline": "Baseline Lab 2", "improved": "MLP cải tiến", "mobilenet": "MobileNetV3 Large"}
 CLASS_COLORS = {
     "cardboard": "#d97706", "glass": "#0284c7", "metal": "#64748b",
@@ -154,16 +149,11 @@ def render_assessment(prediction: Prediction):
     truth = ground_truth()
     assessment = assess_prediction(prediction.top_class, prediction.uncertain, truth["label"])
     status = assessment["status"]
-    if truth["label"] is None:
-        details = "Chọn nhãn thật dưới ảnh để đối chiếu dự đoán đúng hay sai."
-    else:
-        details = (f'Nhãn thật: <strong>{LABELS_VI[truth["label"]]}</strong> · '
-                   f'Top-1: <strong>{LABELS_VI[prediction.top_class]}</strong>')
-        if prediction.uncertain:
-            details += " · Top-1 " + ("trùng" if assessment["top1_correct"] else "khác") + " nhãn thật; mô hình chưa chốt."
-    provenance = {"dataset": "Nhãn từ dataset · tập test", "manual": "Nhãn do bạn cung cấp", None: "Chưa có nhãn đối chiếu"}
-    st.html(f'<section class="assessment {status}"><div><small>ĐỐI CHIẾU NHÃN THẬT</small>'
-            f'<p>{details}</p><span>{provenance[truth["source"]]}</span></div>'
+    label = LABELS_VI[truth["label"]] if truth["label"] else "Chưa có nhãn"
+    provenance = {"dataset": "Nhãn từ dataset · tập test", "manual": "Nhãn do bạn cung cấp",
+                  None: "Chọn nhãn thật dưới ảnh để đối chiếu đúng hay sai."}
+    st.html(f'<section class="assessment {status}"><div><div class="ground-truth-name">'
+            f'Ground Truth: <strong>{label}</strong></div><span>{provenance[truth["source"]]}</span></div>'
             f'<strong class="assessment-badge">{ASSESSMENT_LABELS[status]}</strong></section>')
 
 
@@ -464,16 +454,13 @@ def compare_models(bundle):
             bundle["comparisons"][key] = cached
         assessment = assess_prediction(cached["top_class"], cached["label"] == "uncertain", truth)
         verdict = ASSESSMENT_LABELS[assessment["status"]]
-        if assessment["status"] == "uncertain":
-            verdict += " · Top-1 " + ("đúng" if assessment["top1_correct"] else "sai")
-        rows.append({"Mô hình": MODEL_NAMES[key], "Nhãn thật": LABELS_VI[truth] if truth else "Chưa biết",
-                     "Đối chiếu": verdict, "Kết quả": LABELS_VI[cached["label"]],
-                     "Lớp cao nhất": LABELS_VI[cached["top_class"]], "Confidence (%)": round(cached["confidence"] * 100, 2),
-                     "Confidence": "Đã hiệu chỉnh" if cached["calibrated"] else "Softmax",
-                     "Thời gian (ms)": round(cached["timings_ms"]["total"], 2)})
+        predicted_label = LABELS_VI[cached["label"]]
+        if cached["label"] == "uncertain":
+            predicted_label += f' (gần nhất: {LABELS_VI[cached["top_class"]]})'
+        rows.append({"Dự đoán mô hình": f"{MODEL_NAMES[key]}: {predicted_label}",
+                     "Nhãn thật": LABELS_VI[truth] if truth else "Chưa biết", "Đối chiếu": verdict})
     st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
-    st.caption("Cùng một ảnh sau Module 1. Không chọn mô hình thắng bằng confidence vì các mô hình "
-               "chưa được hiệu chỉnh giống nhau.")
+    st.caption("Cả ba mô hình được đối chiếu với cùng nhãn thật trên cùng một ảnh sau Module 1.")
 
 
 def render_result(signature: str | None):
@@ -490,25 +477,20 @@ def render_result(signature: str | None):
         prediction, key = bundle["prediction"], bundle["model_key"]
         label = LABELS_VI[prediction.label]
         confidence_kind = "Đã hiệu chỉnh" if bundle["calibrated"] else "Softmax chưa hiệu chỉnh"
-        suggestion = ("Hãy thử một ảnh rõ hơn." if prediction.uncertain else BIN_VI[prediction.label])
         st.html(
             f'<div class="prediction-summary {"uncertain" if prediction.uncertain else ""}">'
             f'<div class="prediction-symbol" style="background:{CLASS_COLORS[prediction.top_class]}">♻</div>'
             f'<div class="prediction-copy"><div>KẾT QUẢ DỰ ĐOÁN: <strong>{label}</strong></div>'
             f'<p>Mô hình: <strong>{MODEL_NAMES[key]}</strong> · Suy luận: {prediction.timings_ms["total"]:.1f} ms</p>'
-            f'<p>Gợi ý: {suggestion}</p></div><div class="confidence"><strong>{prediction.confidence:.1%}</strong>'
+            f'</div><div class="confidence"><strong>{prediction.confidence:.1%}</strong>'
             f'<span>{confidence_kind}</span></div></div>')
-        render_assessment(prediction)
         if prediction.uncertain:
             st.caption(f"Lớp gần nhất: {LABELS_VI[prediction.top_class]} · Ngưỡng không chắc {bundle['threshold']:.1%}.")
         if ops.OpsParams(**bundle["params"]).changed():
             original = bundle["original"]
             st.caption(f"Trên ảnh gốc: {LABELS_VI[original.label]} {original.confidence:.1%} "
                        f"→ Sau xử lý: {label} {prediction.confidence:.1%}")
-        with st.expander("Chi tiết thời gian xử lý"):
-            st.caption(f"Module 1: {bundle['ops_ms']:.1f} ms · Chuẩn bị đầu vào: "
-                       f"{prediction.timings_ms['features']:.1f} ms · Model: {prediction.timings_ms['model']:.1f} ms · "
-                       f"Tổng: {bundle['ops_ms'] + prediction.timings_ms['total']:.1f} ms")
+        render_assessment(prediction)
         probability_table(prediction)
         compare = st.toggle("So sánh cả 3 mô hình trên ảnh này", key="compare_models")
         if compare:
