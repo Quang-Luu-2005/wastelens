@@ -39,6 +39,12 @@ subject to the project's Vercel plan. Sessions may reset on reconnect or scale-i
 download a result if you need to retain it. Uploaded user images are not saved to
 the repository or release.
 
+`WASTELENS_STATELESS_HOST=1` enables a small bundled file component: uploads travel
+through the existing session WebSocket, preview images use inline data URLs and
+downloads use browser Blob URLs. This avoids Streamlit's instance-local HTTP
+upload/media store when Vercel routes HTTP requests to different instances. The
+local app keeps its normal Streamlit file picker and download controls.
+
 Never treat a successful build as inference verification: check the deployed
 browser's WebSocket, upload request, model output and downloaded JSON before
 claiming the deployment works. Deployment protection is retained by default.

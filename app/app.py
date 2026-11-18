@@ -4,10 +4,12 @@ Run from the repository root: streamlit run app/app.py
 """
 
 import hashlib
+import base64
 import csv
 import io
 import json
 import random
+import os
 import time
 from dataclasses import asdict
 from datetime import datetime
@@ -38,6 +40,48 @@ CLASS_COLORS = {
 }
 UPLOAD_ERROR = "Không đọc được ảnh. Vui lòng chọn lại tệp JPG hoặc PNG hợp lệ."
 ASSESSMENT_LABELS = {"unlabeled": "Chưa có nhãn thật", "correct": "Đúng", "incorrect": "Sai", "uncertain": "Không chắc"}
+STATELESS_HOST = os.environ.get("WASTELENS_STATELESS_HOST") == "1"
+if STATELESS_HOST:
+    from streamlit.components.v2 import component
+    bridge_assets = Path(__file__).with_name("file_bridge")
+    file_bridge = component("wastelens_files", html=(bridge_assets / "component.html").read_text(encoding="utf-8"),
+                            css=(bridge_assets / "component.css").read_text(encoding="utf-8"),
+                            js=(bridge_assets / "component.js").read_text(encoding="utf-8"))
+
+
+def bridge_upload(key: str):
+    """Send upload bytes over the session WebSocket, not an instance-local HTTP endpoint."""
+    result = file_bridge(data={"mode": "upload", "max_bytes": 4 * 1024 * 1024}, key=key,
+                         default={"file": None}, on_file_change=lambda: None)
+    payload = result.file
+    if not isinstance(payload, dict) or not isinstance(payload.get("data"), str):
+        return
+    try:
+        if len(payload["data"]) > 6 * 1024 * 1024:
+            raise ValueError("Image too large")
+        data = base64.b64decode(payload["data"], validate=True)
+        if len(data) > 4 * 1024 * 1024:
+            raise ValueError("Image too large")
+    except ValueError:
+        st.error("Ảnh không hợp lệ hoặc lớn hơn 4 MB. Vui lòng chọn lại.")
+        return
+    name = str(payload.get("name", "image.png"))
+    marker = (hashlib.sha256(data).hexdigest(), name, key)
+    if marker != st.session_state.last_upload:
+        st.session_state.update(input_bytes=data, input_name=name, sample_label=None, sample_path=None,
+                                last_upload=marker)
+        st.rerun()
+
+
+def show_image(image: np.ndarray, caption: str):
+    if not STATELESS_HOST:
+        st.image(image, channels="BGR", width="stretch", alt=caption)
+        return
+    ok, encoded = cv2.imencode(".png", image)
+    if ok:
+        data = base64.b64encode(encoded).decode("ascii")
+        st.html(f'<div class="inline-image"><img src="data:image/png;base64,{data}" alt="{escape(caption)}"/>'
+                f'<span>{escape(caption)}</span></div>')
 
 
 @st.cache_resource(show_spinner="Đang nạp mô hình…")
@@ -127,6 +171,9 @@ def accept_upload(widget_key: str):
 
 def file_picker():
     key = f"upload_{st.session_state.upload_revision}"
+    if STATELESS_HOST:
+        bridge_upload(key)
+        return
     upload = st.file_uploader("Chọn ảnh JPG hoặc PNG", type=["jpg", "jpeg", "png"], key=key,
                               on_change=accept_upload, args=(key,), label_visibility="collapsed")
     if upload is not None:
@@ -295,12 +342,13 @@ def render_viewer():
         if image is not None:
             if view == "So sánh":
                 before, after = st.columns(2)
-                before.image(image, channels="BGR", caption="Ảnh gốc", width="stretch")
-                after.image(processed, channels="BGR", caption="Sau xử lý", width="stretch")
+                with before:
+                    show_image(image, "Ảnh gốc")
+                with after:
+                    show_image(processed, "Sau xử lý")
             else:
                 shown = processed if view == "Sau xử lý" else image
-                st.image(shown, channels="BGR", width="stretch",
-                         alt="Ảnh sau xử lý" if view == "Sau xử lý" else "Ảnh đầu vào")
+                show_image(shown, "Ảnh sau xử lý" if view == "Sau xử lý" else "Ảnh đầu vào")
             width, height = original_size
             metadata = (f'{escape(st.session_state.input_name)} <span>· {width} × {height} px'
                         f' · {len(st.session_state.input_bytes) / 1024:.1f} KB</span>')
@@ -336,6 +384,9 @@ def render_viewer():
 def file_picker_empty():
     # A separate widget key avoids two copies of the same uploader in the initial card.
     key = f"empty_upload_{st.session_state.upload_revision}"
+    if STATELESS_HOST:
+        bridge_upload(key)
+        return
     upload = st.file_uploader("Thả ảnh vào đây hoặc bấm để chọn", type=["jpg", "jpeg", "png"],
                               key=key, on_change=accept_upload, args=(key,))
     if upload is not None:
@@ -535,6 +586,20 @@ def render_exports(bundle, include_comparisons: bool):
         "comparisons": comparisons,
     }
     stamp = bundle["time"].replace(":", "").replace("-", "")
+    if STATELESS_HOST:
+        ok, annotated = cv2.imencode(".png", annotate(bundle["processed"], prediction, truth["label"]))
+        clean_ok, clean = cv2.imencode(".png", bundle["processed"])
+        if ok and clean_ok:
+            files = [
+                {"label": "Tải ảnh kết quả", "name": f"wastelens-{key}-{stamp}.png", "mime": "image/png",
+                 "data": base64.b64encode(annotated).decode("ascii")},
+                {"label": "Tải JSON", "name": f"wastelens-{key}-{stamp}.json", "mime": "application/json",
+                 "data": base64.b64encode(json.dumps(record, ensure_ascii=False, indent=2).encode()).decode("ascii")},
+                {"label": "Tải ảnh sau xử lý", "name": f"wastelens-{key}-{stamp}-processed.png", "mime": "image/png",
+                 "data": base64.b64encode(clean).decode("ascii")},
+            ]
+            file_bridge(data={"mode": "downloads", "files": files}, key="downloads_bridge")
+        return
     with st.container(key="export_actions"):
         image_col, json_col, clean_col = st.columns(3)
         ok, png = cv2.imencode(".png", annotate(bundle["processed"], prediction, truth["label"]))

@@ -52,6 +52,9 @@ button[kind="secondary"]:hover { color: var(--wl-primary); border-color: #8cbbb7
 .st-key-image_card [data-testid="stImage"] img {
   width: 100%; max-height: 510px; object-fit: contain; background: #f1f5f9; border-radius: 7px;
 }
+.inline-image img { display: block; width: 100%; max-height: 510px; object-fit: contain;
+  background: #f1f5f9; border-radius: 7px; }
+.inline-image span { display: block; text-align: center; font-size: 11px; color: #64748b; padding-top: 5px; }
 .st-key-image_card [data-testid="stSegmentedControl"] button { font-size: 12px; min-height: 34px; }
 .st-key-image_card [data-testid="stSegmentedControl"] button p { font-size: 12px; }
 .st-key-image_card [data-testid="stPopover"] > button { font-size: 12px; background: transparent; }

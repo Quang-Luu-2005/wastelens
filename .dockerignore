@@ -7,6 +7,8 @@
 !app/
 !app/app.py
 !app/styles.css
+!app/file_bridge/
+!app/file_bridge/*
 !.streamlit/
 !.streamlit/config.toml
 !data/
