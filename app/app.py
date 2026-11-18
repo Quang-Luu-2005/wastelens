@@ -451,7 +451,7 @@ def compare_models(bundle):
         predicted_label = LABELS_VI[cached["label"]]
         if cached["label"] == "uncertain":
             predicted_label += f' (gần nhất: {LABELS_VI[cached["top_class"]]})'
-        row = {"Dự đoán mô hình": f"{MODEL_NAMES[key]}: {predicted_label}"}
+        row = {"Tên mô hình": MODEL_NAMES[key], "Dự đoán của mô hình": predicted_label}
         if truth is not None:
             row.update({"Nhãn thật": LABELS_VI[truth], "Đối chiếu": verdict})
         rows.append(row)

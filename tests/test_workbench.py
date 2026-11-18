@@ -71,7 +71,8 @@ class WorkbenchUITests(unittest.TestCase):
             valid(app)
             self.assertEqual(set(records[-1]["comparisons"]), set(MODEL_PROFILES))
             self.assertEqual(len(app.dataframe[0].value), 3)
-            self.assertEqual(list(app.dataframe[0].value.columns), ["Dự đoán mô hình", "Nhãn thật", "Đối chiếu"])
+            self.assertEqual(list(app.dataframe[0].value.columns),
+                             ["Tên mô hình", "Dự đoán của mô hình", "Nhãn thật", "Đối chiếu"])
             for comparison in records[-1]["comparisons"].values():
                 self.assertEqual(comparison["evaluation"]["top1_correct"], comparison["top_class"] == "cardboard")
 

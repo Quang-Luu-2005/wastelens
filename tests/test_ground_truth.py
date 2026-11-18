@@ -93,7 +93,7 @@ class GroundTruthUITests(unittest.TestCase):
                 if all(profile.checkpoint.is_file() for profile in MODEL_PROFILES.values()):
                     app.toggle(key="compare_models").set_value(True).run()
                     valid(app)
-                    self.assertEqual(list(app.dataframe[0].value.columns), ["Dự đoán mô hình"])
+                    self.assertEqual(list(app.dataframe[0].value.columns), ["Tên mô hình", "Dự đoán của mô hình"])
                     self.assertTrue(all(item["evaluation"]["top1_correct"] is None
                                         for item in records[-1]["comparisons"].values()))
             app.button(key="sample_cardboard").click().run()
