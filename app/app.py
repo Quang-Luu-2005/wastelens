@@ -85,7 +85,7 @@ def decode_image(data: bytes) -> tuple[np.ndarray, tuple[int, int]]:
 
 def init_state():
     defaults = {"input_bytes": None, "input_name": "", "sample_label": None, "sample_path": None,
-                "manual_truth": None, "upload_revision": 0,
+                "upload_revision": 0,
                 "last_upload": None, "ops_params": asdict(ops.OpsParams()), "processing_level": "Gốc",
                 "result": None, "image_view": "Ảnh gốc"}
     for key, value in defaults.items():
@@ -93,13 +93,13 @@ def init_state():
 
 
 def clear_image():
-    st.session_state.update(input_bytes=None, input_name="", sample_label=None, sample_path=None, manual_truth=None,
+    st.session_state.update(input_bytes=None, input_name="", sample_label=None, sample_path=None,
                             upload_revision=st.session_state.upload_revision + 1, result=None)
 
 
 def choose_sample(label: str, path: Path):
     st.session_state.update(input_bytes=path.read_bytes(), input_name=path.name, sample_label=label,
-                            sample_path=path.relative_to(ROOT / "data/trashnet").as_posix(), manual_truth=None,
+                            sample_path=path.relative_to(ROOT / "data/trashnet").as_posix(),
                             upload_revision=st.session_state.upload_revision + 1)
     st.session_state.dataset_browser = False
 
@@ -109,7 +109,6 @@ def accept_upload(widget_key: str):
     if file is not None:
         data = file.getvalue()
         st.session_state.update(input_bytes=data, input_name=file.name, sample_label=None, sample_path=None,
-                                manual_truth=None,
                                 last_upload=(hashlib.sha256(data).hexdigest(), file.name, widget_key))
 
 
@@ -123,37 +122,32 @@ def file_picker():
         # Also supports integrations that supply the file directly rather than via a callback.
         if marker != st.session_state.last_upload:
             st.session_state.update(input_bytes=data, input_name=upload.name, sample_label=None, sample_path=None,
-                                    manual_truth=None, last_upload=marker)
+                                    last_upload=marker)
 
 
 def ground_truth() -> dict:
     """Reference labels are only for evaluation and are never classifier inputs."""
     dataset_label = st.session_state.sample_label
-    label = dataset_label or st.session_state.manual_truth
-    return {"label": label, "source": "dataset" if dataset_label else "manual" if label else None,
+    return {"label": dataset_label, "source": "dataset" if dataset_label else None,
             "path": st.session_state.sample_path if dataset_label else None}
 
 
-def render_truth_input():
+def render_dataset_label():
     truth = ground_truth()
     if truth["source"] == "dataset":
         st.html(f'<div class="ground-truth-label">Nhãn thật: <strong>{LABELS_VI[truth["label"]]}</strong>'
                 '<span>Từ nhãn dataset · tập test</span></div>')
-    else:
-        st.selectbox("Nhãn thật (tùy chọn)", list(CLASS_COLORS), index=None, key="manual_truth",
-                     format_func=lambda label: LABELS_VI[label], placeholder="Chưa biết nhãn thật",
-                     help="Chọn nhãn bạn biết để đối chiếu đúng/sai. Nhãn này không được dùng để dự đoán.")
 
 
 def render_assessment(prediction: Prediction):
     truth = ground_truth()
+    if truth["source"] != "dataset":
+        return
     assessment = assess_prediction(prediction.top_class, prediction.uncertain, truth["label"])
     status = assessment["status"]
-    label = LABELS_VI[truth["label"]] if truth["label"] else "Chưa có nhãn"
-    provenance = {"dataset": "Nhãn từ dataset · tập test", "manual": "Nhãn do bạn cung cấp",
-                  None: "Chọn nhãn thật dưới ảnh để đối chiếu đúng hay sai."}
+    label = LABELS_VI[truth["label"]]
     st.html(f'<section class="assessment {status}"><div><div class="ground-truth-name">'
-            f'Ground Truth: <strong>{label}</strong></div><span>{provenance[truth["source"]]}</span></div>'
+            f'Ground Truth: <strong>{label}</strong></div><span>Nhãn từ dataset · tập test</span></div>'
             f'<strong class="assessment-badge">{ASSESSMENT_LABELS[status]}</strong></section>')
 
 
@@ -300,7 +294,7 @@ def render_viewer():
             if max(original_size) > MAX_SIDE:
                 metadata += f' <span>· Xử lý ở {image.shape[1]} × {image.shape[0]} px</span>'
             st.html(f'<div class="file-metadata">{metadata}</div>')
-            render_truth_input()
+            render_dataset_label()
         samples = sample_catalog()
         if samples:
             with st.container(key="sample_strip"):
@@ -332,7 +326,7 @@ def file_picker_empty():
         marker = (hashlib.sha256(upload.getvalue()).hexdigest(), upload.name, key)
         if marker != st.session_state.last_upload:
             st.session_state.update(input_bytes=upload.getvalue(), input_name=upload.name, sample_label=None,
-                                    sample_path=None, manual_truth=None, last_upload=marker)
+                                    sample_path=None, last_upload=marker)
             st.rerun()
 
 
@@ -457,10 +451,13 @@ def compare_models(bundle):
         predicted_label = LABELS_VI[cached["label"]]
         if cached["label"] == "uncertain":
             predicted_label += f' (gần nhất: {LABELS_VI[cached["top_class"]]})'
-        rows.append({"Dự đoán mô hình": f"{MODEL_NAMES[key]}: {predicted_label}",
-                     "Nhãn thật": LABELS_VI[truth] if truth else "Chưa biết", "Đối chiếu": verdict})
+        row = {"Dự đoán mô hình": f"{MODEL_NAMES[key]}: {predicted_label}"}
+        if truth is not None:
+            row.update({"Nhãn thật": LABELS_VI[truth], "Đối chiếu": verdict})
+        rows.append(row)
     st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
-    st.caption("Cả ba mô hình được đối chiếu với cùng nhãn thật trên cùng một ảnh sau Module 1.")
+    st.caption("Cả ba mô hình được đối chiếu với cùng nhãn thật trên cùng một ảnh sau Module 1." if truth is not None
+               else "Dự đoán của ba mô hình trên cùng một ảnh sau Module 1.")
 
 
 def render_result(signature: str | None):

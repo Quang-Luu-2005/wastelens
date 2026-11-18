@@ -1,4 +1,4 @@
-"""Ground-truth provenance, correctness and label-only updates without inference."""
+"""Ground truth is available for dataset samples only, never arbitrary uploads."""
 
 import csv
 import io
@@ -11,6 +11,7 @@ from streamlit.delta_generator import DeltaGenerator
 from streamlit.testing.v1 import AppTest
 
 from wastelens.classifier import DEFAULT_CHECKPOINT
+from wastelens.profiles import MODEL_PROFILES
 from wastelens.workbench import assess_prediction
 
 from test_upload_ui import APP, upload
@@ -39,7 +40,7 @@ class AssessmentTests(unittest.TestCase):
 
 @unittest.skipUnless(DEFAULT_CHECKPOINT.is_file(), "Install the app checkpoint first")
 class GroundTruthUITests(unittest.TestCase):
-    def test_dataset_labels_manual_labels_and_unknown_uploads_stay_separate(self):
+    def test_only_dataset_images_have_ground_truth(self):
         records = []
         original_download = DeltaGenerator.download_button
 
@@ -86,22 +87,17 @@ class GroundTruthUITests(unittest.TestCase):
                 valid(app)
                 self.assertEqual(records[-1]["evaluation"]["status"], "unlabeled")
                 self.assertIsNone(records[-1]["ground_truth"]["label"])
-                probabilities = records[-1]["prediction"]["probabilities"]
-                top_class = records[-1]["prediction"]["top_class"]
-                with patch("wastelens.classifier.WasteClassifier.classify",
-                           side_effect=AssertionError("Ground-truth changes must not run inference")):
-                    app.selectbox(key="manual_truth").set_value(top_class).run()
+                self.assertIsNone(records[-1]["ground_truth"]["source"])
+                self.assertIsNone(records[-1]["evaluation"]["top1_correct"])
+                self.assertFalse(any(box.key == "manual_truth" for box in app.selectbox))
+                if all(profile.checkpoint.is_file() for profile in MODEL_PROFILES.values()):
+                    app.toggle(key="compare_models").set_value(True).run()
                     valid(app)
-                    self.assertEqual(records[-1]["ground_truth"]["source"], "manual")
-                    self.assertTrue(records[-1]["evaluation"]["top1_correct"])
-                    other_class = next(label for label in probabilities if label != top_class)
-                    app.selectbox(key="manual_truth").set_value(other_class).run()
-                    valid(app)
-                    self.assertFalse(records[-1]["evaluation"]["top1_correct"])
-                    self.assertEqual(records[-1]["prediction"]["probabilities"], probabilities)
+                    self.assertEqual(list(app.dataframe[0].value.columns), ["Dự đoán mô hình"])
+                    self.assertTrue(all(item["evaluation"]["top1_correct"] is None
+                                        for item in records[-1]["comparisons"].values()))
             app.button(key="sample_cardboard").click().run()
             valid(app)
-            self.assertIsNone(app.session_state["manual_truth"])
             self.assertEqual(app.session_state["sample_label"], "cardboard")
 
 
