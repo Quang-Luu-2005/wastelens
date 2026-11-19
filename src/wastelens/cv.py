@@ -22,6 +22,7 @@ import shutil
 import statistics
 import time
 from concurrent.futures import ProcessPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -42,8 +43,14 @@ def write_json(path: Path, value) -> None:
 
 # Round-three configurations worth re-ranking under CV: the HOG + HSV parent, the selected
 # HOG + HSV + Lab winner and the much smaller HSV-only model that nearly tied it.
-CONFIGS = {experiment.name: experiment for experiment in ROUND3
-           if experiment.name in ("baseline", "extra_lab", "hsv_only")}
+DEFAULT_CONFIGS = ("baseline", "extra_lab", "hsv_only")
+CONFIGS = {experiment.name: experiment for experiment in ROUND3 if experiment.name in DEFAULT_CONFIGS}
+# Single networks with the parameter budget of five extra_lab MLPs (3,646,590): does one
+# larger network match the 5-seed ensemble? Same descriptors, dropout, LayerNorm and recipe.
+CONFIGS["extra_lab_wide"] = replace(CONFIGS["extra_lab"], name="extra_lab_wide", parent="extra_lab",
+                                    hidden_sizes=(1200, 256, 64))  # 3,654,934 parameters
+CONFIGS["extra_lab_deep"] = replace(CONFIGS["extra_lab"], name="extra_lab_deep", parent="extra_lab",
+                                    hidden_sizes=(1056, 512, 256, 128, 64))  # 3,646,374 parameters
 TAU_GRID = tuple(round(0.25 * step, 2) for step in range(9))  # 0.0 to 2.0
 
 
@@ -589,7 +596,7 @@ def main():
     parser.add_argument("--target-accuracy", type=float, default=0.90,
                         help="export mode: accuracy required of predictions not marked uncertain")
     parser.add_argument("--probe-images", type=int, default=16, help="export mode: images used for the reload check")
-    parser.add_argument("--configs", nargs="+", choices=CONFIGS, default=list(CONFIGS))
+    parser.add_argument("--configs", nargs="+", choices=CONFIGS, default=list(DEFAULT_CONFIGS))
     parser.add_argument("--folds", type=int, default=5)
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--split-seed", type=int, default=2026)
