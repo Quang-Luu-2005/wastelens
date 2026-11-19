@@ -8,6 +8,7 @@ MODEL_DIR = Path(__file__).resolve().parents[2] / "models"
 
 @dataclass(frozen=True)
 class ModelProfile:
+    """Display name, checkpoint file and training description of one app model."""
     name: str
     filename: str
     description: str
@@ -15,6 +16,7 @@ class ModelProfile:
 
     @property
     def checkpoint(self) -> Path:
+        """Absolute path of the checkpoint inside the repository's models/ folder."""
         return MODEL_DIR / self.filename
 
 

@@ -78,6 +78,7 @@ def bridge_upload(key: str):
 
 
 def show_image(image: np.ndarray, caption: str):
+    """Display a BGR image; on the stateless host, embed it as a data URI instead of a media file."""
     if not STATELESS_HOST:
         st.image(image, channels="BGR", width="stretch", alt=caption)
         return
@@ -95,17 +96,20 @@ def load_model(checkpoint: str, modified_ns: int) -> WasteClassifier:
 
 
 def profile_model(key: str) -> WasteClassifier:
+    """Cached classifier for a model ID, keyed by the checkpoint's modification time."""
     path = MODEL_PROFILES[key].checkpoint
     return load_model(str(path), path.stat().st_mtime_ns)
 
 
 @st.cache_resource(show_spinner="Đang nạp bộ phát hiện vật…")
 def load_detector(checkpoint: str, modified_ns: int):
+    """Cached COCO object detector for the webcam tab."""
     return ObjectDetector(Path(checkpoint))
 
 
 @st.cache_resource
 def camera_component(asset_revision: tuple[int, ...]):
+    """Custom camera component (HTML/CSS/JS), rebuilt when its asset files change."""
     from streamlit.components.v2 import component
     assets = Path(__file__).with_name("camera")
     return component("wastelens_camera", **{kind: (assets / f"component.{kind}").read_text(encoding="utf-8")
@@ -113,6 +117,7 @@ def camera_component(asset_revision: tuple[int, ...]):
 
 
 def render_webcam():
+    """Webcam tab: the browser streams JPEG frames; each is detected, cropped and classified."""
     st.caption("SSDLite phát hiện vật → cắt vùng ảnh → mô hình bạn chọn phân loại thành 6 loại rác.")
     model_col, processing_col, settings_col = st.columns([4, 3, 2])
     key = model_col.selectbox("Mô hình phân loại", list(MODEL_NAMES), format_func=MODEL_NAMES.get,
@@ -133,9 +138,12 @@ def render_webcam():
     if not MODEL_PROFILES[key].checkpoint.is_file():
         st.error(f"Thiếu checkpoint: {MODEL_PROFILES[key].filename}")
         return
+    # Webcam state survives Streamlit reruns: the last response sent to the browser, the recognized
+    # objects, the browser session ID (changes on every camera start) and the selected object.
     state = st.session_state.setdefault("camera_state", {"response": None, "objects": [], "marker": None,
                                                          "session": None, "active": False, "selected": None})
     settings = (key, preset, threshold, max_objects)
+    # New model or settings: drop results that were computed with the old ones.
     if state.get("settings") != settings:
         state.update(settings=settings, objects=[], selected=None)
         if state["response"]:
@@ -148,6 +156,7 @@ def render_webcam():
                                 on_frame_change=lambda: None, on_event_change=lambda: None,
                                 on_selection_change=lambda: None)
     event = result.event
+    # Start/stop events from the browser reset the tracker so IDs never leak between camera sessions.
     if isinstance(event, dict) and event != state.get("last_event"):
         state["last_event"] = event
         state.update(active=event.get("active") is True, session=event.get("session"), objects=[], selected=None,
@@ -157,6 +166,7 @@ def render_webcam():
         state["selected"] = selection.get("id")
         state["selection_event"] = selection
     payload = result.frame
+    # Only frames from the current camera session are processed, and each sequence number only once.
     if isinstance(payload, dict) and state["active"] and payload.get("session") == state["session"]:
         marker = (payload.get("session"), payload.get("seq"))
         if marker != state["marker"]:
@@ -178,7 +188,7 @@ def render_webcam():
                 response["error"] = "Không xử lý được khung hình. Dừng rồi bật lại camera."
                 state["error"] = str(error)
             state["response"] = response
-            st.rerun()
+            st.rerun()  # Rerun so the component receives the boxes and can send the next frame.
     objects = state["objects"] if state["active"] else []
     if objects:
         ids = [obj["id"] for obj in objects]
@@ -230,12 +240,14 @@ def to_bgr(image: Image.Image) -> np.ndarray:
 @st.cache_data(show_spinner=False)
 def decode_image(data: bytes) -> tuple[np.ndarray, tuple[int, int]]:
     # Pixel decoding must be guarded too: truncated images may open successfully.
+    """Decode uploaded bytes to a bounded BGR image and its original (EXIF-corrected) size."""
     with Image.open(io.BytesIO(data)) as image:
         original_size = ImageOps.exif_transpose(image).size
         return to_bgr(image), original_size
 
 
 def init_state():
+    """Create every session-state key the page reads, once per browser session."""
     defaults = {"input_bytes": None, "input_name": "", "sample_label": None, "sample_path": None,
                 "upload_revision": 0,
                 "last_upload": None, "ops_params": asdict(ops.OpsParams()), "processing_level": "Gốc",
@@ -245,11 +257,13 @@ def init_state():
 
 
 def clear_image():
+    """Remove the current image and its result; a new uploader key resets the widget."""
     st.session_state.update(input_bytes=None, input_name="", sample_label=None, sample_path=None,
                             upload_revision=st.session_state.upload_revision + 1, result=None)
 
 
 def choose_sample(label: str, path: Path):
+    """Load a labelled test image so ground truth and correctness can be shown."""
     st.session_state.update(input_bytes=path.read_bytes(), input_name=path.name, sample_label=label,
                             sample_path=path.relative_to(ROOT / "data/trashnet").as_posix(),
                             upload_revision=st.session_state.upload_revision + 1)
@@ -269,6 +283,7 @@ def choose_random_sample(label: str | None = None):
 
 
 def accept_upload(widget_key: str):
+    """Uploader callback: store the new file's bytes and forget any dataset label."""
     file = st.session_state.get(widget_key)
     if file is not None:
         data = file.getvalue()
@@ -277,6 +292,7 @@ def accept_upload(widget_key: str):
 
 
 def file_picker():
+    """Image uploader inside the change-image popover (or the session bridge on the stateless host)."""
     key = f"upload_{st.session_state.upload_revision}"
     if STATELESS_HOST:
         bridge_upload(key)
@@ -300,6 +316,7 @@ def ground_truth() -> dict:
 
 
 def render_dataset_label():
+    """Show the manifest label of a dataset sample; uploads have no ground truth."""
     truth = ground_truth()
     if truth["source"] == "dataset":
         st.html(f'<div class="ground-truth-label">Nhãn thật: <strong>{LABELS_VI[truth["label"]]}</strong>'
@@ -307,6 +324,7 @@ def render_dataset_label():
 
 
 def render_assessment(prediction: Prediction):
+    """Ground-truth card: correct, incorrect or uncertain, for dataset samples only."""
     truth = ground_truth()
     if truth["source"] != "dataset":
         return
@@ -319,6 +337,7 @@ def render_assessment(prediction: Prediction):
 
 
 def choose_preset(name: str):
+    """Apply a Module 1 preset and switch the preview to the processed image."""
     st.session_state.ops_params = asdict(PRESETS[name])
     st.session_state.processing_level = name
     if st.session_state.get("image_view") != "So sánh":
@@ -326,16 +345,19 @@ def choose_preset(name: str):
 
 
 def prepare_editor():
+    """Copy the active Module 1 settings into the editor's widget keys."""
     for key, value in st.session_state.ops_params.items():
         st.session_state[f"edit_{key}"] = value
 
 
 def reset_editor():
+    """Set every editor slider back to the identity (no-op) value."""
     for key, value in asdict(ops.OpsParams()).items():
         st.session_state[f"edit_{key}"] = value
 
 
 def commit_editor():
+    """Save the editor's values as the active Module 1 settings (the Apply button)."""
     st.session_state.ops_params = {
         key: st.session_state.get(f"edit_{key}", value) for key, value in asdict(ops.OpsParams()).items()
     }
@@ -346,6 +368,7 @@ def commit_editor():
 
 @st.dialog("Tùy chỉnh xử lý ảnh", width="large")
 def custom_processing():
+    """Dialog with every Module 1 control; changes apply only after Áp dụng."""
     st.caption("Module 1 · Chỉ những giá trị khác mặc định mới tác động lên ảnh. Bấm Áp dụng để lưu.")
     with st.form("processing_form"):
         color, geometry, smoothing = st.tabs(["Màu sắc", "Hình học", "Làm mượt & nhiễu"])
@@ -386,6 +409,7 @@ def custom_processing():
 
 @st.dialog("Hướng dẫn sử dụng")
 def show_help():
+    """Short usage guide dialog."""
     st.markdown("1. **Chọn ảnh** hoặc thử một ảnh mẫu.\n"
                 "2. Chọn **mô hình** và **mức xử lý ảnh** bên dưới vùng xem.\n"
                 "3. Bấm **Phân loại** để xem kết quả và xác suất sáu lớp.\n"
@@ -399,6 +423,7 @@ def show_help():
 
 @st.dialog("Thông tin mô hình", width="large")
 def show_model_info():
+    """Dialog describing the three models and how their confidence is computed."""
     for key, profile in MODEL_PROFILES.items():
         st.subheader(MODEL_NAMES[key])
         st.write(profile.description)
@@ -409,6 +434,7 @@ def show_model_info():
 
 
 def render_header():
+    """Brand bar with the model-information and help buttons."""
     with st.container(key="brand_header"):
         brand, info, help_col = st.columns([5, 2.5, 1.7], vertical_alignment="center")
         brand.html('<div class="brand"><span class="brand-icon" aria-hidden="true"></span>'
@@ -493,6 +519,7 @@ def render_viewer():
 
 def file_picker_empty():
     # A separate widget key avoids two copies of the same uploader in the initial card.
+    """Large uploader shown in the empty image card before any image is chosen."""
     key = f"empty_upload_{st.session_state.upload_revision}"
     if STATELESS_HOST:
         bridge_upload(key)
@@ -508,6 +535,7 @@ def file_picker_empty():
 
 
 def render_toolbar(has_image: bool):
+    """Model, processing level and run controls; returns (model ID, run clicked, checkpoint present)."""
     key = st.session_state.get("model_key", DEFAULT_MODEL)
     level = st.session_state.processing_level
     with st.container(key="action_bar", border=True):
@@ -571,6 +599,7 @@ def annotate(image: np.ndarray, prediction: Prediction, true_label: str | None =
 
 
 def run_inference(image, processed, params, ops_ms, model_key, signature):
+    """Classify the processed image (and the original, if Module 1 changed it) and store the result."""
     classifier = profile_model(model_key)
     prediction = classifier.classify(processed)
     original = classifier.classify(image) if params.changed() else prediction
@@ -583,6 +612,7 @@ def run_inference(image, processed, params, ops_ms, model_key, signature):
 
 
 def probability_table(prediction: Prediction | None):
+    """Six-class probability table with proportional bars, highest first."""
     rows = []
     values = sorted(prediction.probabilities.items(), key=lambda item: item[1], reverse=True) if prediction else [
         (name, None) for name in LABELS_VI if name != "uncertain"]
@@ -605,6 +635,7 @@ def probability_table(prediction: Prediction | None):
 
 
 def compare_models(bundle):
+    """Run all three models on the same processed image and show their predictions side by side."""
     rows = []
     truth = ground_truth()["label"]
     for key, profile in MODEL_PROFILES.items():
@@ -638,6 +669,7 @@ def compare_models(bundle):
 
 
 def render_result(signature: str | None):
+    """Result card; shown only while the image, settings and model still match the stored result."""
     bundle = st.session_state.result
     with st.container(key="result_card", border=True):
         if bundle is None:
@@ -674,6 +706,7 @@ def render_result(signature: str | None):
 
 
 def render_exports(bundle, include_comparisons: bool):
+    """Download buttons for the annotated PNG, the processed PNG and the JSON record."""
     prediction, original = bundle["prediction"], bundle["original"]
     key, profile = bundle["model_key"], MODEL_PROFILES[bundle["model_key"]]
     truth = ground_truth()
@@ -739,6 +772,7 @@ def video_processing_options() -> dict[str, ops.OpsParams]:
 
 
 def render_video():
+    """Video tab: choose a video, model and Module 1 settings, then process it on request."""
     st.caption("Module 1 xử lý mọi khung hình → mô hình phân loại mỗi N khung → làm mượt xác suất theo thời gian "
                "→ video có nhãn, biểu đồ xác suất và file kết quả.")
     if STATELESS_HOST:
@@ -837,6 +871,7 @@ def render_video():
 
 
 def render_video_result(bundle):
+    """Processed-video view: players, summary, probability timeline, snapshot and downloads."""
     result, key, classes = bundle["result"], bundle["model_key"], bundle["classes"]
     summary = result.summary()
     before, after = st.columns(2)
@@ -931,6 +966,7 @@ def render_video_result(bundle):
 
 
 def main():
+    """Page layout: header, input source tabs, then the image, video or webcam workflow."""
     st.set_page_config(page_title="WasteLens · Phân loại rác", page_icon="♻️", layout="wide",
                        initial_sidebar_state="collapsed")
     st.html(Path(__file__).with_name("styles.css"))

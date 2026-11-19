@@ -46,6 +46,7 @@ def make_optimizer(model, learning_rate: float, epochs: int):
 
 
 def select_device(requested: str) -> torch.device:
+    """Resolve 'auto' to CUDA when available and check that CUDA can actually run a kernel."""
     if requested == "auto":
         requested = "cuda" if torch.cuda.is_available() else "cpu"
     if requested == "cuda":
@@ -59,6 +60,7 @@ def select_device(requested: str) -> torch.device:
 
 
 def image_batch_to_device(images: torch.Tensor, device: torch.device | str) -> torch.Tensor:
+    """Move a batch to the device; uint8 caches are scaled to [0, 1] there."""
     images = images.to(device, non_blocking=True)
     if images.dtype == torch.uint8:
         return images.float().div_(255)
@@ -66,6 +68,7 @@ def image_batch_to_device(images: torch.Tensor, device: torch.device | str) -> t
 
 
 def train_epoch(model, loader, optimizer, loss_fn, scaler, device) -> float:
+    """One pass over the training loader with mixed precision when enabled; returns the mean loss."""
     model.train()
     total_loss = 0.0
     for images, labels in loader:
@@ -82,6 +85,7 @@ def train_epoch(model, loader, optimizer, loss_fn, scaler, device) -> float:
 
 
 def classification_metrics(matrix: torch.Tensor, classes: list[str]) -> dict:
+    """Accuracy, macro-F1 and per-class precision/recall/F1 from a confusion matrix."""
     correct = matrix.diag()
     support = matrix.sum(dim=1)
     predicted = matrix.sum(dim=0)
@@ -106,6 +110,7 @@ def classification_metrics(matrix: torch.Tensor, classes: list[str]) -> dict:
 
 @torch.inference_mode()
 def evaluate(model, loader, loss_fn, device, classes) -> tuple[dict, torch.Tensor, torch.Tensor]:
+    """Metrics, predictions and confidences of a model on one loader, without gradients."""
     model.eval()
     total_loss = 0.0
     true_labels, predictions, confidences = [], [], []
@@ -129,6 +134,7 @@ def evaluate(model, loader, loss_fn, device, classes) -> tuple[dict, torch.Tenso
 
 
 def write_csv(path: Path, header, rows) -> None:
+    """Write rows to a UTF-8 CSV file with Unix line endings."""
     with path.open("w", encoding="utf-8", newline="") as file:
         writer = csv.writer(file, lineterminator="\n")
         writer.writerow(header)
@@ -136,6 +142,7 @@ def write_csv(path: Path, header, rows) -> None:
 
 
 def write_json(path: Path, value: dict) -> None:
+    """Write a dictionary as indented JSON."""
     path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
 
 
@@ -154,6 +161,7 @@ def train(
     native_resolution: bool = False,
     affine_augmentation: bool = False,
 ) -> dict:
+    """Train a classifier, keep the checkpoint with the best validation macro-F1, then evaluate test once."""
     if architecture not in ARCHITECTURES:
         raise ValueError(f"Unknown architecture {architecture!r}; choose one of {ARCHITECTURES}")
     pretrained = architecture != "lab02-mlp"
@@ -181,6 +189,7 @@ def train(
             input_size = sample.size
 
     def make_loader(split: str) -> DataLoader:
+        """Data loader for one split; only the training split is shuffled and augmented."""
         training = split == "train"
         dataset = TrashNetDataset(
             image_root, splits[split], input_size, augment=training,
@@ -263,6 +272,7 @@ def train(
 
 
 def main() -> None:
+    """Command-line entry point."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image-root", type=Path, default=Path("data/trashnet"))
     parser.add_argument("--manifest", type=Path, default=Path("data/splits/trashnet.csv"))

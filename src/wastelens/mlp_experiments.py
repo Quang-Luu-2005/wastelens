@@ -27,6 +27,7 @@ from .train import classification_metrics, write_csv, write_json
 
 @dataclass(frozen=True)
 class Experiment:
+    """One MLP configuration in the from-scratch ablation rounds."""
     name: str
     parent: str | None
     hidden_sizes: tuple[int, ...] = (128, 32)
@@ -43,6 +44,7 @@ class Experiment:
     residual: bool = False
 
     def model_config(self) -> dict:
+        """Keyword arguments for MLPVariant derived from this experiment."""
         return {**{key: asdict(self)[key] for key in
                    ("hidden_sizes", "dropout", "layer_norm", "activation", "block_depth", "residual")},
                 "normalize_input": self.normalization != "none",
@@ -98,11 +100,13 @@ class FocalLoss(nn.Module):
     """Multiclass focal loss with gamma=2 and no additional class weights."""
 
     def forward(self, logits, labels):
+        """Focal loss: cross-entropy down-weighted by (1 - p)^2 on easy examples."""
         ce = F.cross_entropy(logits, labels, reduction="none")
         return ((1 - torch.exp(-ce)).square() * ce).mean()
 
 
 def make_loss(name: str, train_labels: torch.Tensor, num_classes: int) -> nn.Module:
+    """Loss function by name: cross-entropy, label smoothing, class-weighted CE or focal loss."""
     if name == "focal":
         return FocalLoss()
     if name == "weighted_ce":
@@ -121,6 +125,7 @@ def make_loss(name: str, train_labels: torch.Tensor, num_classes: int) -> nn.Mod
 
 @torch.inference_mode()
 def measure(model, images, labels, classes, batch_size=256):
+    """Metrics, predictions and confidences of a model on cached inputs."""
     model.eval()
     logits = torch.cat([model(batch) for batch in images.split(batch_size)])
     predicted = logits.argmax(dim=1)
@@ -132,12 +137,14 @@ def measure(model, images, labels, classes, batch_size=256):
 
 
 def cached_split(image_root, samples, device):
+    """Load a split as 64 x 64 float tensors on the training device."""
     dataset = TrashNetDataset(image_root, samples, 64, augment=False)
     # 1764 training images at 64x64 occupy only about 83 MiB of GPU memory.
     return dataset.images.to(device), dataset.labels.to(device)
 
 
 def represent(images: torch.Tensor, representation: str) -> torch.Tensor:
+    """Convert cached 64 x 64 images to the requested descriptor representation."""
     if representation == "pixels":
         return images
     from PIL import Image
@@ -189,6 +196,7 @@ def fit_normalization(model: MLPVariant, images: torch.Tensor, experiment: Exper
 
 def run_seed(image_root: Path, manifest: Path, output: Path, seed: int, epochs: int, device: str,
              batch_size: int = 64, names: list[str] | None = None, suite: str = "round1"):
+    """Train every configuration of a suite for one seed; select epochs on validation only."""
     if epochs < 1 or batch_size < 1:
         raise ValueError("Epochs and batch size must be positive")
     output.mkdir(parents=True, exist_ok=False)
@@ -362,6 +370,7 @@ def summarize(image_root: Path, manifest: Path, output: Path, seeds: list[int], 
 
 
 def main():
+    """Command-line entry point."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=("train", "summarize"))
     parser.add_argument("--image-root", type=Path, default=Path("data/trashnet"))

@@ -17,6 +17,7 @@ UNCERTAIN = "uncertain"
 
 @dataclass
 class Prediction:
+    """Result of classifying one image."""
     label: str                      # Top-1 class, or "uncertain" below the calibrated threshold.
     top_class: str                  # Top-1 class even when the prediction is uncertain.
     confidence: float               # Top-1 probability in [0, 1]; calibration depends on the model.
@@ -25,6 +26,7 @@ class Prediction:
 
     @property
     def uncertain(self) -> bool:
+        """True when the calibrated confidence is below the model's threshold."""
         return self.label == UNCERTAIN
 
 
@@ -47,6 +49,7 @@ class WasteClassifier:
     """Load a checkpoint once, then classify many images with per-stage timing."""
 
     def __init__(self, checkpoint: Path = DEFAULT_CHECKPOINT, device: str = "cpu", warm_up: int = 3):
+        """Load the checkpoint, read its threshold and warm the model up."""
         self.model, self.classes = load_classifier(Path(checkpoint), device)
         self.calibrated = isinstance(self.model, DescriptorEnsemble)
         self.threshold = self.model.uncertain_threshold if self.calibrated else 0.0
@@ -58,6 +61,7 @@ class WasteClassifier:
 
     @torch.inference_mode()
     def classify(self, image: Image.Image | np.ndarray) -> Prediction:
+        """Classify a PIL image or BGR frame, timing input preparation and the model separately."""
         started = time.perf_counter()
         rgb = to_pil(image)
         inputs = prepare_classifier_input(self.model, rgb)

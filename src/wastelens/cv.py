@@ -39,6 +39,7 @@ from .train import write_json as _write_json
 
 def write_json(path: Path, value) -> None:
     # NumPy scalars (float64, bool_) are converted to their Python equivalents first.
+    """Write JSON after converting NumPy scalars to Python numbers."""
     _write_json(path, json.loads(json.dumps(value, default=lambda item: item.item())))
 
 # Round-three configurations worth re-ranking under CV: the HOG + HSV parent, the selected
@@ -134,6 +135,7 @@ _WORKER = {}
 
 
 def _init_worker(cache_files: dict[str, str], threads: int):
+    """Worker set-up: thread count, deterministic algorithms and the cached descriptors."""
     torch.set_num_threads(threads)
     # Deterministic cuBLAS needs a fixed workspace; set it before the first CUDA call.
     os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
@@ -144,6 +146,7 @@ def _init_worker(cache_files: dict[str, str], threads: int):
 
 
 def _run_task(task):
+    """Train one (configuration, repeat, fold, seed) and return its out-of-fold log-probabilities."""
     name, repeat, fold, seed, folds_of_repeat, epochs, eval_epochs, device = task
     experiment = CONFIGS[name]
     features, flipped, labels = _WORKER[experiment.representation]
@@ -247,6 +250,7 @@ def summarize_cv(results: dict, labels: np.ndarray, assignments: np.ndarray, cla
         tests = []
         for repeat in range(len(assignments)):
             def predictions(row):
+                """Top-1 predictions of a candidate in one repeat."""
                 scores = results[row["config"]][repeat, :, eval_epochs.index(row["epochs"])]
                 return (ensemble_log_probs(scores) if row["ensemble_size"] > 1 else scores[0]).argmax(1)
             tests.append(mcnemar_exact(predictions(reference) == labels, predictions(chosen) == labels))
@@ -256,6 +260,7 @@ def summarize_cv(results: dict, labels: np.ndarray, assignments: np.ndarray, cla
 
 
 def run_cv(args):
+    """Repeated stratified CV over all configurations, then candidate selection and file output."""
     eval_epochs = sorted(set(args.eval_epochs))
     epochs = max(eval_epochs)
     names = args.configs
@@ -282,6 +287,7 @@ def run_cv(args):
     print(f"{len(tasks)} fits on {args.workers} worker(s), {epochs} epochs each, scored at {eval_epochs}", flush=True)
 
     def store(key, outputs, seconds, done):
+        """Place one task's out-of-fold scores into the results array and log progress."""
         name, repeat, fold, seed = key
         held_out = assignments[repeat] == fold
         for epoch_index, epoch in enumerate(eval_epochs):
@@ -329,6 +335,7 @@ def run_cv(args):
 
 
 def print_table(rows, selection):
+    """Print the candidates sorted by mean fold macro-F1."""
     print(f"\n{'config':<10}{'epochs':>7}{'seeds':>6}{'fold F1':>9}{'±SE':>7}{'OOF acc':>9}{'trash R':>9}{'+LA F1':>8}")
     for row in sorted(rows, key=lambda row: -row["fold_macro_f1_mean"]):
         print(f"{row['config']:<10}{row['epochs']:>7}{row['ensemble_size']:>6}{row['fold_macro_f1_mean']:>9.4f}"
@@ -355,6 +362,7 @@ def fit_temperature(log_probs: list[np.ndarray], labels: np.ndarray) -> float:
     rows = np.arange(len(labels))
 
     def nll(temperature):
+        """Mean negative log-likelihood of the true class after temperature scaling."""
         return statistics.mean(float(-np.log(calibrate(scores, temperature)[rows, labels] + 1e-12).mean())
                                for scores in log_probs)
     return min(TEMPERATURE_GRID, key=nll)
@@ -584,6 +592,7 @@ def run_final(args):
 
 
 def main():
+    """Command-line entry point for the cv, final and export modes."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("mode", choices=("cv", "final", "export"))
     parser.add_argument("--image-root", type=Path, default=Path("data/trashnet"))

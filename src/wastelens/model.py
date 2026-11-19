@@ -24,7 +24,9 @@ IMAGENET_STD = (0.229, 0.224, 0.225)
 
 
 class Lab02MLP(nn.Module):
+    """The Lab02 network: flattened RGB pixels -> 128 -> 32 -> C logits, ReLU, Xavier initialization."""
     def __init__(self, image_size: ImageSize = 64, num_classes: int = 6):
+        """Lab02 topology with a C-unit output layer instead of a single sigmoid unit."""
         super().__init__()
         self.image_size = image_size
         width, height = (image_size, image_size) if isinstance(image_size, int) else image_size
@@ -43,6 +45,7 @@ class Lab02MLP(nn.Module):
                 nn.init.zeros_(layer.bias)
 
     def forward(self, images: torch.Tensor) -> torch.Tensor:
+        """Raw logits for each class."""
         # CrossEntropyLoss consumes raw logits and applies log-softmax internally.
         return self.layers(images)
 
@@ -51,12 +54,14 @@ class DenseBlock(nn.Module):
     """Matched two-layer dense block, optionally adding its input to the output."""
 
     def __init__(self, width: int, dropout: float, residual: bool):
+        """LayerNorm -> Linear -> GELU -> Dropout -> Linear -> Dropout, all of the same width."""
         super().__init__()
         self.residual = residual
         self.branch = nn.Sequential(nn.LayerNorm(width), nn.Linear(width, width), nn.GELU(),
                                     nn.Dropout(dropout), nn.Linear(width, width), nn.Dropout(dropout))
 
     def forward(self, inputs):
+        """Hidden features of the same width; with residual=True the input is added back."""
         branch = self.branch(inputs)
         return inputs + branch if self.residual else branch
 
@@ -71,6 +76,7 @@ class MLPVariant(nn.Module):
         activation: str = "relu", input_features: int | None = None,
         normalize_input: bool = False, block_depth: int = 0, residual: bool = False,
     ):
+        """Stack the hidden layers described by the arguments and Xavier-initialize every Linear layer."""
         super().__init__()
         if not hidden_sizes or any(size < 1 for size in hidden_sizes) or not 0 <= dropout < 1:
             raise ValueError("Expected positive hidden sizes and dropout in [0, 1)")
@@ -105,6 +111,7 @@ class MLPVariant(nn.Module):
                 nn.init.zeros_(layer.bias)
 
     def forward(self, images: torch.Tensor) -> torch.Tensor:
+        """Standardize the inputs with the stored training statistics, then return raw logits."""
         if self.input_mean is not None:
             images = (images.flatten(1) - self.input_mean) / self.input_std
         return self.layers(images)
@@ -120,6 +127,7 @@ class DescriptorEnsemble(nn.Module):
 
     def __init__(self, members: list[tuple[str, nn.Module]], temperature: float = 1.0,
                  uncertain_threshold: float = 0.0):
+        """Store the members with their descriptor names, the temperature and the uncertain threshold."""
         super().__init__()
         if not members or temperature <= 0:
             raise ValueError("Expected at least one member and a positive temperature")
@@ -154,6 +162,7 @@ class PretrainedClassifier(nn.Module):
     """
 
     def __init__(self, backbone: str, image_size: int = 224, num_classes: int = 6, pretrained: bool = False):
+        """Build a torchvision backbone, optionally with ImageNet weights, and replace its output layer."""
         super().__init__()
         if backbone not in BACKBONES:
             raise ValueError(f"Unknown backbone {backbone!r}; choose one of {sorted(BACKBONES)}")
@@ -175,6 +184,7 @@ class PretrainedClassifier(nn.Module):
         return self.network.fc if hasattr(self.network, "fc") else self.network.classifier[-1]
 
     def forward(self, images: torch.Tensor) -> torch.Tensor:
+        """Raw logits for each class."""
         # Raw logits, as for the MLP; softmax is applied only at inference.
         return self.network((images - self.mean) / self.std)
 

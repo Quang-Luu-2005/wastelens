@@ -13,6 +13,7 @@ from .model import ImageSize, prepare_image, preprocess
 
 
 def read_splits(manifest: Path) -> tuple[dict[str, list[tuple[str, int]]], list[str]]:
+    """Read the manifest into train/val/test lists of (path, class ID) and the class names."""
     splits = {"train": [], "val": [], "test": []}
     class_names = {}
     paths = set()
@@ -33,10 +34,12 @@ def read_splits(manifest: Path) -> tuple[dict[str, list[tuple[str, int]]], list[
 
 
 class TrashNetDataset(Dataset):
+    """Images of one split cached in memory, with optional flip and affine augmentation."""
     def __init__(
         self, image_root: Path, samples: list[tuple[str, int]], image_size: ImageSize,
         augment: bool = False, affine_augmentation: bool = False, store_uint8: bool = False,
     ):
+        """Decode and resize every image once, so training epochs only index tensors."""
         self.labels = torch.tensor([label for _, label in samples], dtype=torch.long)
         self.augment = augment
         # Native-size images always stay as bytes; larger square inputs may opt in.
@@ -58,9 +61,11 @@ class TrashNetDataset(Dataset):
         self.images = torch.stack(images)
 
     def __len__(self) -> int:
+        """Number of images in the split."""
         return len(self.labels)
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
+        """One (image, label) pair; augmentation is drawn fresh on every call."""
         image = self.images[index]
         if self.augment and torch.rand(()).item() < 0.5:
             image = image.flip(-1)
