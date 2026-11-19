@@ -10,6 +10,7 @@ import io
 import json
 import random
 import os
+import tempfile
 import time
 from dataclasses import asdict
 from datetime import datetime
@@ -27,6 +28,8 @@ from wastelens.classifier import Prediction, WasteClassifier
 from wastelens.profiles import DEFAULT_MODEL, MODEL_PROFILES
 from wastelens.workbench import PRESETS, PRESET_DESCRIPTIONS, assess_prediction, describe_operations, request_signature
 from wastelens.streaming import DETECTOR_WEIGHTS, ObjectDetector, ObjectTracker, decode_frame, recognize_objects
+from wastelens.video import (VideoSettings, make_sample_video, probe, process_video, read_frame, records_csv,
+                             segment_agreement)
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_SIDE = 1024
@@ -388,6 +391,8 @@ def show_help():
                 "3. Bấm **Phân loại** để xem kết quả và xác suất sáu lớp.\n"
                 "4. Tải PNG/JSON hoặc so sánh ba mô hình trên cùng ảnh.")
     st.info("Mức xử lý là preset bộ lọc ảnh. Mức mạnh hơn không đảm bảo phân loại tốt hơn.")
+    st.caption("Tab Video: tải video (hoặc tạo video mẫu), chọn mô hình và mức xử lý, bấm Xử lý video để nhận "
+               "video có nhãn, biểu đồ xác suất theo thời gian, snapshot và CSV/JSON.")
     st.caption("Ảnh lớn được thu về tối đa 1.024 px ở cạnh dài. Chọn tab Webcam để phát hiện và phân loại vật trực tiếp; "
                "bấm Bật camera rồi cấp quyền, chọn mô hình và nhấp khung bao để xem xác suất. Bấm Dừng camera để kết thúc.")
 
@@ -526,7 +531,7 @@ def render_toolbar(has_image: bool):
         with source_col:
             with st.popover("Ảnh", icon=":material/image:", width="stretch"):
                 st.write("Ảnh JPG / PNG")
-                st.caption("Chuyển sang tab Webcam ở đầu trang để phân loại trực tiếp.")
+                st.caption("Chuyển sang tab Video hoặc Webcam ở đầu trang để xử lý video.")
         key = st.session_state.get("model_key", DEFAULT_MODEL)
         available = MODEL_PROFILES[key].checkpoint.is_file()
         run = run_col.button("Phân loại" if st.session_state.result is None else "Phân loại lại",
@@ -720,13 +725,222 @@ def render_exports(bundle, include_comparisons: bool):
                                   icon=":material/image:", width="stretch", on_click="ignore")
 
 
+VIDEO_DIR = Path(tempfile.gettempdir()) / "wastelens-video"  # Uploaded and processed videos for this machine.
+VIDEO_TYPES = ["mp4", "mov", "avi", "mkv", "webm"]
+
+
+def video_processing_options() -> dict[str, ops.OpsParams]:
+    """The image presets, plus the custom Module 1 settings when they were edited in the image tab."""
+    options = dict(PRESETS)
+    custom = ops.OpsParams(**st.session_state.ops_params)
+    if custom.changed() and st.session_state.processing_level == "Tùy chỉnh":
+        options["Tùy chỉnh (từ tab Ảnh)"] = custom
+    return options
+
+
+def render_video():
+    st.caption("Module 1 xử lý mọi khung hình → mô hình phân loại mỗi N khung → làm mượt xác suất theo thời gian "
+               "→ video có nhãn, biểu đồ xác suất và file kết quả.")
+    if STATELESS_HOST:
+        st.info("Chế độ video cần chạy ứng dụng trên máy cục bộ; bản triển khai chỉ nhận tệp tối đa 4 MB.")
+        return
+    VIDEO_DIR.mkdir(parents=True, exist_ok=True)
+    upload_col, sample_col = st.columns([3, 1], vertical_alignment="bottom")
+    upload = upload_col.file_uploader("Chọn video MP4, MOV, AVI, MKV hoặc WEBM", type=VIDEO_TYPES, key="video_upload")
+    catalog = sample_catalog()
+    if sample_col.button("Tạo video mẫu từ tập test", icon=":material/auto_awesome_motion:", width="stretch",
+                         disabled=not catalog, help="Mỗi lớp một ảnh test, 2 giây mỗi ảnh, có chuyển động phóng chậm."):
+        images = [(label, random.choice(catalog[label])) for label in CLASS_COLORS if label in catalog]
+        path = VIDEO_DIR / f"sample-{datetime.now():%Y%m%d-%H%M%S}.mp4"
+        segments = make_sample_video(images, path)
+        st.session_state.video_source = {"path": path, "name": path.name, "segments": segments,
+                                         "digest": hashlib.sha256(path.read_bytes()).hexdigest()}
+    if upload is not None:
+        data = upload.getvalue()
+        digest = hashlib.sha256(data).hexdigest()
+        current = st.session_state.get("video_source")
+        if current is None or current.get("upload_digest") != digest:
+            path = VIDEO_DIR / f"input-{digest[:16]}{Path(upload.name).suffix.lower()}"
+            if not path.exists():
+                path.write_bytes(data)  # OpenCV and PyAV read from a file path, not from memory.
+            st.session_state.video_source = {"path": path, "name": upload.name, "segments": None,
+                                             "digest": digest, "upload_digest": digest}
+    chosen = st.session_state.get("video_source")
+    if chosen is None:
+        st.info("Tải một video lên, hoặc tạo video mẫu từ ảnh test. Video dài chỉ xử lý 60 giây đầu (chỉnh trong Thiết lập).")
+        return
+    source, digest = chosen["path"], chosen["digest"]
+    if chosen["segments"]:
+        st.caption("Video mẫu · thứ tự nhãn thật: " + " → ".join(LABELS_VI[s["label"]] for s in chosen["segments"]))
+    try:
+        info = probe(source)
+    except ValueError:
+        st.error("Không đọc được video. Hãy thử tệp MP4 (H.264) khác.")
+        return
+
+    options = video_processing_options()
+    model_col, processing_col, settings_col = st.columns([4, 3, 2])
+    key = model_col.selectbox("Mô hình phân loại", list(MODEL_NAMES), format_func=MODEL_NAMES.get,
+                              index=list(MODEL_NAMES).index(DEFAULT_MODEL), key="video_model")
+    preset = processing_col.selectbox("Xử lý khung hình (Module 1)", list(options), key="video_preset")
+    with settings_col.popover("Thiết lập video", width="stretch"):
+        every = st.slider("Phân loại mỗi N khung hình", 1, 30, max(1, round(info["fps"] / 5)), key="video_every",
+                          help="N nhỏ chính xác theo thời gian hơn nhưng chậm hơn.")
+        max_seconds = st.slider("Xử lý tối đa (giây đầu video)", 5, 120, 60, 5, key="video_max_seconds")
+        max_side = st.selectbox("Độ phân giải đầu ra (cạnh dài)", [480, 720, 960, 1280], index=2,
+                                format_func=lambda size: f"{size} px", key="video_max_side")
+        smoothing = st.slider("Trọng số dự đoán mới (EMA)", 0.1, 1.0, 0.5, 0.1, key="video_smoothing",
+                              help="1,0 = không làm mượt; nhỏ hơn = nhãn ổn định hơn nhưng đổi chậm hơn.")
+    settings = VideoSettings(classify_every=every, max_seconds=float(max_seconds), max_side=max_side,
+                             smoothing=smoothing)
+    params = options[preset]
+    duration = info["duration_s"]
+    st.caption(f"{chosen['name']} · {info['width']}×{info['height']} · {info['fps']:.2f} fps"
+               + (f" · {duration:.1f} giây" if duration else "")
+               + f" · Module 1: {describe_operations(params)}")
+    if not MODEL_PROFILES[key].checkpoint.is_file():
+        st.error(f"Thiếu checkpoint: {MODEL_PROFILES[key].filename}")
+        return
+    version = MODEL_PROFILES[key].checkpoint.stat().st_mtime_ns
+    signature = hashlib.sha256(json.dumps(
+        {"video": digest, "params": asdict(params), "model": key, "version": version, "settings": asdict(settings)},
+        sort_keys=True).encode()).hexdigest()
+    bundle = st.session_state.get("video_result")
+    label = "Xử lý lại video" if bundle else "Xử lý video"
+    if st.button(label, type="primary", icon=":material/movie:", key="video_run", width="stretch"):
+        progress = st.progress(0.0, text="Đang xử lý video…")
+        classifier = profile_model(key)
+        destination = VIDEO_DIR / f"output-{signature[:16]}.mp4"
+        try:
+            result = process_video(source, destination, classifier, params, settings,
+                                   progress=lambda fraction, text: progress.progress(fraction, text=text))
+        except (ValueError, RuntimeError, OSError):
+            progress.empty()
+            st.error("Không xử lý được video này. Hãy thử tệp MP4 (H.264) khác.")
+            return
+        st.session_state.video_result = {
+            "signature": signature, "result": result, "model_key": key, "preset": preset,
+            "params": asdict(params), "settings": asdict(settings), "name": chosen["name"], "source": source,
+            "segments": chosen["segments"],
+            "time": datetime.now().isoformat(timespec="seconds"), "calibrated": classifier.calibrated,
+            "threshold": classifier.threshold, "classes": classifier.classes,
+        }
+        st.rerun()
+    if bundle is None:
+        st.video(str(source))
+        return
+    if bundle["signature"] != signature:
+        st.warning("Video, mô hình hoặc thiết lập đã thay đổi. Bấm Xử lý lại video để cập nhật kết quả.")
+        st.video(str(source))
+        return
+    render_video_result(bundle)
+
+
+def render_video_result(bundle):
+    result, key, classes = bundle["result"], bundle["model_key"], bundle["classes"]
+    summary = result.summary()
+    before, after = st.columns(2)
+    with before:
+        st.caption("Video gốc")
+        st.video(str(bundle["source"]))
+    with after:
+        st.caption(f"Sau xử lý và phân loại · {result.width}×{result.height}")
+        st.video(str(result.output))
+        if not result.browser_playable:
+            st.caption("Trình duyệt có thể không phát được codec dự phòng; hãy tải video về để xem.")
+    dominant = summary["dominant_confident_label"] or "uncertain"
+    share = summary["label_shares"].get(dominant, 0.0)
+    uncertain_note = (f" · Không chắc: {summary['uncertain_share']:.0%} số khung"
+                      if summary["uncertain_share"] and dominant != "uncertain" else "")
+    confidence_kind = "đã hiệu chỉnh" if bundle["calibrated"] else "softmax chưa hiệu chỉnh"
+    with st.container(key="video_summary", border=True):
+        st.html(f'<div class="prediction-summary"><div class="prediction-symbol" '
+                f'style="background:{CLASS_COLORS.get(dominant, "#f59e0b")}">♻</div>'
+                f'<div class="prediction-copy"><div>NHÃN CHIẾM ƯU THẾ: <strong>{LABELS_VI[dominant]}</strong></div>'
+                f'<p>{share:.0%} số khung được phân loại{uncertain_note} · Mô hình: <strong>{MODEL_NAMES[key]}</strong> '
+                f'· Xử lý: {escape(bundle["preset"])}</p></div></div>')
+        stats = st.columns(4)
+        stats[0].metric("Khung hình đã xử lý", f"{result.frames_read}",
+                        help="Đã dừng ở giới hạn thời gian." if result.truncated else None)
+        stats[1].metric("Khung được phân loại", f"{summary['classified_frames']}")
+        stats[2].metric("Tốc độ xử lý (khung/s)", f"{summary['processing_fps']:.0f}")
+        stats[3].metric("Suy luận TB (ms)", f"{summary['mean_inference_ms']:.1f}")
+        per_frame = summary["mean_ms_per_frame"]
+        st.caption("Thời gian trung bình mỗi khung (ms): " + " · ".join(
+            f"{name} {per_frame[stage]:.1f}" for stage, name in
+            (("decode", "Giải mã"), ("module1", "Module 1"), ("classify", "Phân loại"), ("encode", "Mã hóa"))))
+        if result.truncated:
+            st.caption(f"Video dài hơn giới hạn; chỉ {result.frames_read / result.fps:.0f} giây đầu được xử lý.")
+        if bundle.get("segments"):
+            agreement = segment_agreement(result, bundle["segments"])
+            if agreement["frames"]:
+                st.caption(f"Đối chiếu nhãn thật của video mẫu ({agreement['frames']} khung được phân loại). "
+                           f"Top-1 từng khung: đúng {agreement['raw_top1']:.0%}. Nhãn hiển thị sau làm mượt: "
+                           f"đúng {agreement['smoothed']:.0%} · không chắc {agreement['smoothed_uncertain']:.0%} · "
+                           f"sai {agreement['smoothed_wrong']:.0%}. Ảnh test trên nền TrashNet, không phải video thực tế.")
+
+    st.markdown("**Xác suất 6 lớp theo thời gian** (sau làm mượt EMA, " + confidence_kind + ")")
+    frame = pd.DataFrame([{**{LABELS_VI[name]: 100 * record.smoothed_probabilities[name] for name in classes},
+                           "Thời gian (s)": round(record.time_s, 2)} for record in result.records])
+    st.line_chart(frame, x="Thời gian (s)", y=[LABELS_VI[name] for name in classes],
+                  color=[CLASS_COLORS[name] for name in classes], y_label="Xác suất (%)", height=280)
+    if bundle["calibrated"]:
+        st.caption(f"Khung có xác suất cao nhất dưới {bundle['threshold']:.1%} được gắn nhãn “Không chắc”.")
+
+    st.markdown("**Snapshot một khung hình**")
+    times = [record.time_s for record in result.records]
+    chosen = st.select_slider("Thời điểm", options=list(range(len(times))), format_func=lambda i: f"{times[i]:.1f} s",
+                              key="video_snapshot")
+    record = result.records[chosen]
+    snapshot = read_frame(result.output, record.frame)
+    left, right = st.columns([3, 2])
+    if snapshot is not None:
+        with left:
+            show_image(snapshot, f"Khung {record.frame} · {record.time_s:.1f} s")
+    with right:
+        st.markdown(f"Khung này: **{LABELS_VI[record.top_class]}** {record.confidence:.1%} · "
+                    f"sau làm mượt: **{LABELS_VI[record.smoothed_label]}** {record.smoothed_confidence:.1%}")
+        probability_table(Prediction(label=record.smoothed_label, top_class=max(record.smoothed_probabilities,
+                                     key=record.smoothed_probabilities.get), confidence=record.smoothed_confidence,
+                                     probabilities=record.smoothed_probabilities))
+
+    stamp = bundle["time"].replace(":", "").replace("-", "")
+    record_json = {
+        "time": bundle["time"], "source": bundle["name"], "module1": ops.OpsParams(**bundle["params"]).changed(),
+        "preset": bundle["preset"], "video_settings": bundle["settings"], "summary": summary,
+        "model": MODEL_PROFILES[key].filename, "model_details": {"id": key, "name": MODEL_PROFILES[key].name,
+                                                                "training": MODEL_PROFILES[key].training},
+        "calibrated": bundle["calibrated"], "uncertain_threshold": bundle["threshold"],
+        "sample_segments": bundle.get("segments"),
+        "sample_agreement": segment_agreement(result, bundle["segments"]) if bundle.get("segments") else None,
+    }
+    with st.container(key="video_exports"):
+        video_col, csv_col, json_col, snap_col = st.columns(4)
+        video_col.download_button("Tải video kết quả", result.output.read_bytes(), f"wastelens-{key}-{stamp}.mp4",
+                                  "video/mp4", icon=":material/movie:", width="stretch", on_click="ignore")
+        csv_col.download_button("Tải CSV theo khung", records_csv(result, classes).encode("utf-8"),
+                                f"wastelens-{key}-{stamp}-frames.csv", "text/csv", icon=":material/table:",
+                                width="stretch", on_click="ignore")
+        json_col.download_button("Tải JSON", json.dumps(record_json, ensure_ascii=False, indent=2).encode("utf-8"),
+                                 f"wastelens-{key}-{stamp}.json", "application/json", icon=":material/data_object:",
+                                 width="stretch", on_click="ignore")
+        ok, png = cv2.imencode(".png", snapshot) if snapshot is not None else (False, None)
+        snap_col.download_button("Tải snapshot", png.tobytes() if ok else b"",
+                                 f"wastelens-{key}-{stamp}-t{record.time_s:.1f}s.png", "image/png", disabled=not ok,
+                                 icon=":material/photo_camera:", width="stretch", on_click="ignore")
+
+
 def main():
     st.set_page_config(page_title="WasteLens · Phân loại rác", page_icon="♻️", layout="wide",
                        initial_sidebar_state="collapsed")
     st.html(Path(__file__).with_name("styles.css"))
     init_state()
     render_header()
-    mode = st.segmented_control("Nguồn đầu vào", ["Ảnh", "Webcam"], default="Ảnh", required=True, key="input_mode")
+    mode = st.segmented_control("Nguồn đầu vào", ["Ảnh", "Video", "Webcam"], default="Ảnh", required=True,
+                                key="input_mode")
+    if mode == "Video":
+        render_video()
+        return
     if mode == "Webcam":
         render_webcam()
         return

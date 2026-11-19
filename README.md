@@ -63,7 +63,7 @@ The centered image workbench follows the supplied Stitch design. Upload an image
 
 Processing levels are **Gốc** (identity), **Nhẹ** (Gaussian σ=0.4), **Vừa** (gamma 1.15, CLAHE 2.0, Gaussian σ=0.8), and **Mạnh** (gamma 1.25, contrast 1.15, CLAHE 3.0, Gaussian σ=1.2). They are experimental filter presets, not quality guarantees. **Chỉnh sửa** opens the full Module 1 dialog; settings take effect only after **Áp dụng**. Preview modes show the original, processed image or both side by side.
 
-Enable **So sánh cả 3 mô hình trên ảnh này** after inference to compare independent predictions on the same processed image. The app never chooses a winner by comparing confidence values. A missing optional checkpoint does not block the selected available model. The interface shows actual probabilities and timings; the reference design's sample scores, Platt calibration and CUDA/ONNX labels are not used. Video and webcam remain unimplemented and are identified as such in the source menu.
+Enable **So sánh cả 3 mô hình trên ảnh này** after inference to compare independent predictions on the same processed image. The app never chooses a winner by comparing confidence values. A missing optional checkpoint does not block the selected available model. The interface shows actual probabilities and timings; the reference design's sample scores, Platt calibration and CUDA/ONNX labels are not used.
 
 These are exploratory results from existing experiments: baseline/MobileNet train on 1,764 images with a separate 380-image validation split, while the improved ensemble is refitted on all 2,144 development images after cross-validation. The table is not a controlled comparison with identical training budgets. All scores use the same fixed test set, including predictions below the ensemble's uncertainty threshold.
 
@@ -76,6 +76,29 @@ Dataset samples display their ground-truth label from the versioned manifest. Ea
 | Module 1 (presets and custom dialog) | Color: gamma, contrast and brightness, HSV hue/saturation/value, CLAHE, grayscale. Geometry: rotation, scale, flips, center crop. Smoothing: Gaussian, median, bilateral. Optional synthetic Gaussian and salt-and-pepper noise. Original/processed/side-by-side preview modes. |
 | Module 2 | Explicit inference from the selected model: label, confidence and all six probabilities in a table with proportional bars. Only the improved ensemble uses calibrated confidence and its stored *uncertain* threshold; baseline/MobileNet show raw softmax confidence. Shows compact inference time, with full stage timings in the JSON export. When Module 1 is active, also shows the prediction on the original image. Ground-truth card and optional three-model comparison table. |
 | Snapshot & export | Downloads the annotated result PNG, the processed PNG and a JSON record of the selected model, settings, predictions and timings, including all three results when comparison is enabled. |
+
+### Video file mode
+
+Choose **Video** in *Nguồn đầu vào*. Upload an MP4, MOV, AVI, MKV or WEBM file, or click **Tạo video mẫu từ tập test**, which builds a 12-second clip from one random test image per class with a slow zoom and known labels. Then select the model and the Module 1 processing (a preset, or the custom settings applied in the image tab) and click **Xử lý video**. [`wastelens.video`](src/wastelens/video.py) runs the pipeline for each frame:
+
+1. Decode with OpenCV, which applies rotation metadata.
+2. Downscale so the longest side is at most 960 px.
+3. Apply Module 1.
+4. Every N frames (default about five per second), classify the frame and update an exponential moving average (EMA) of the six probabilities.
+5. Draw the smoothed label and confidence.
+6. Encode H.264 with PyAV (`libx264`, `yuv420p`, `faststart`) so browsers can play the result.
+
+The improved ensemble's *uncertain* threshold applies to the smoothed probabilities. **Thiết lập video** sets N, the processing limit (60 s by default), the output resolution and the EMA weight; a weight of 1.0 disables smoothing.
+
+The result shows:
+
+- the original and processed videos side by side;
+- the most frequent confident label and the share of uncertain frames;
+- frame counts, processing speed and mean milliseconds per stage (decode, Module 1, classification, encoding);
+- a line chart of the six smoothed probabilities over time;
+- a snapshot slider with the six-class table for that frame.
+
+Downloads include the annotated MP4, a per-frame CSV of raw and smoothed probabilities, a JSON summary, and the snapshot PNG. For the sample clip, the app compares frames with the known segment labels: raw Top-1 is correct or wrong, and smoothed labels are correct, uncertain or wrong. These are images on TrashNet backgrounds stitched into a clip, not real-world video accuracy. Video mode runs locally only; the stateless deployment accepts at most 4 MB uploads and does not install PyAV. Uploaded and processed videos are stored under the system temporary folder in `wastelens-video/`.
 
 The operations live in [`wastelens.ops`](src/wastelens/ops.py) as functions from a BGR image to a BGR image, so video, webcam and the filter experiment can reuse them. Uploads larger than 1024 px on the long side are downscaled first.
 
