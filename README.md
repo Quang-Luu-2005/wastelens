@@ -132,6 +132,10 @@ The calibrated confidence is reliable only for photos like TrashNet's. Shifting 
 
 The descriptor ensemble is robust to blur and noise but loses 26 points under a 5% warm colour cast and 61 points when the image is darkened to V = 0.3. MobileNetV3 is robust to colour but falls to 43.8% under 15% salt-and-pepper noise. No Module 1 filter significantly improves accuracy on clean TrashNet photos. A median filter recovers salt-and-pepper damage almost completely, and gray-world recovers most of a colour cast. See the [analysis](docs/filter-experiment.md) and the [tables and figures](reports/filter-robustness-20261119/results.md).
 
+### Binary versus multi-class
+
+[`scripts/binary_vs_multiclass.py`](scripts/binary_vs_multiclass.py) keeps the descriptors, the 256-64-32 MLP, the optimizer and the CV folds fixed, and changes only the label map, the output units and the loss. With the same features, a binary fibre-vs-rest task reaches 91.0% out-of-fold accuracy against 76.9% for six classes. After correcting for chance, Cohen's κ is 0.811 against 0.716. A 1-logit sigmoid and a 2-logit softmax are statistically indistinguishable, and summing the six-class probabilities answers the binary questions as well as dedicated binary models. The test split is not used. See the [derivations and results](docs/binary-vs-multiclass.md).
+
 To reproduce the deployed models' test scores and check that PIL/OpenCV inputs agree:
 
 ```powershell

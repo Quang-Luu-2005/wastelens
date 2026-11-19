@@ -110,3 +110,25 @@ def holm(p_values: list[float]) -> list[float]:
         running = max(running, min(1.0, (len(p_values) - rank) * p_values[index]))
         adjusted[index] = running
     return adjusted
+
+
+def agreement_metrics(labels: np.ndarray, predicted: np.ndarray, num_classes: int) -> dict:
+    """Accuracy plus chance-corrected scores that stay comparable across different class counts.
+
+    Balanced accuracy is the mean per-class recall; Cohen's kappa compares accuracy with the
+    agreement expected from the marginals; MCC is the multiclass (Gorodkin) correlation.
+    """
+    matrix = confusion(labels, predicted, num_classes).astype(np.float64)
+    total = matrix.sum()
+    true, pred, correct = matrix.sum(axis=1), matrix.sum(axis=0), np.trace(matrix)
+    accuracy, macro_f1 = accuracy_and_macro_f1(labels, predicted, num_classes)
+    present = true > 0
+    expected = float((true * pred).sum() / total ** 2)
+    denominator = np.sqrt((total ** 2 - (pred ** 2).sum()) * (total ** 2 - (true ** 2).sum()))
+    return {
+        "accuracy": float(accuracy), "macro_f1": float(macro_f1),
+        "balanced_accuracy": float((np.diag(matrix)[present] / true[present]).mean()),
+        "kappa": (float(accuracy) - expected) / (1 - expected) if expected < 1 else 0.0,
+        "mcc": float((correct * total - (true * pred).sum()) / denominator) if denominator else 0.0,
+        "majority_accuracy": float(true.max() / total),
+    }

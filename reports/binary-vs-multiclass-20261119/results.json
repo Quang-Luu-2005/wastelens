@@ -1,0 +1,520 @@
+{
+  "images": 2144,
+  "folds": 5,
+  "fold_seed": 2026,
+  "seeds": [
+    42,
+    43
+  ],
+  "epochs": 300,
+  "minutes": 21.60987110333323,
+  "results": {
+    "six_softmax": {
+      "task": "six",
+      "classes": 6,
+      "chance_level": 0.16666666666666666,
+      "accuracy": 0.7688899253731343,
+      "macro_f1": 0.7525648947590508,
+      "balanced_accuracy": 0.7465147292453725,
+      "kappa": 0.7157891273623117,
+      "mcc": 0.7159133989769719,
+      "majority_accuracy": 0.2355410447761194,
+      "per_seed": [
+        {
+          "accuracy": 0.7649253731343284,
+          "macro_f1": 0.7458600142593236,
+          "balanced_accuracy": 0.7395624518542884,
+          "kappa": 0.7108508014796548,
+          "mcc": 0.7109766342019059,
+          "majority_accuracy": 0.2355410447761194
+        },
+        {
+          "accuracy": 0.7728544776119403,
+          "macro_f1": 0.7592697752587779,
+          "balanced_accuracy": 0.7534670066364567,
+          "kappa": 0.7207274532449686,
+          "mcc": 0.720850163752038,
+          "majority_accuracy": 0.2355410447761194
+        }
+      ],
+      "confusion_seed0": [
+        [
+          291,
+          8,
+          10,
+          20,
+          13,
+          1
+        ],
+        [
+          7,
+          302,
+          37,
+          9,
+          58,
+          10
+        ],
+        [
+          8,
+          50,
+          239,
+          10,
+          36,
+          5
+        ],
+        [
+          12,
+          15,
+          18,
+          439,
+          17,
+          4
+        ],
+        [
+          14,
+          40,
+          21,
+          22,
+          301,
+          10
+        ],
+        [
+          8,
+          14,
+          10,
+          7,
+          10,
+          68
+        ]
+      ],
+      "parameters": 729318,
+      "head_parameters": 198,
+      "epoch_seconds": 0.28199231688971893,
+      "final_train_loss": 0.015507345244359396
+    },
+    "six_ovr": {
+      "task": "six",
+      "classes": 6,
+      "chance_level": 0.16666666666666666,
+      "accuracy": 0.7719216417910448,
+      "macro_f1": 0.7557652633549268,
+      "balanced_accuracy": 0.7523994494032555,
+      "kappa": 0.71960881677968,
+      "mcc": 0.719731836909185,
+      "majority_accuracy": 0.2355410447761194,
+      "per_seed": [
+        {
+          "accuracy": 0.7672574626865671,
+          "macro_f1": 0.7504452693419821,
+          "balanced_accuracy": 0.7460305863653492,
+          "kappa": 0.7137669090878931,
+          "mcc": 0.7139155943322423,
+          "majority_accuracy": 0.2355410447761194
+        },
+        {
+          "accuracy": 0.7765858208955224,
+          "macro_f1": 0.7610852573678714,
+          "balanced_accuracy": 0.7587683124411617,
+          "kappa": 0.725450724471467,
+          "mcc": 0.7255480794861277,
+          "majority_accuracy": 0.2355410447761194
+        }
+      ],
+      "confusion_seed0": [
+        [
+          282,
+          13,
+          14,
+          18,
+          14,
+          2
+        ],
+        [
+          10,
+          312,
+          40,
+          15,
+          36,
+          10
+        ],
+        [
+          5,
+          47,
+          245,
+          17,
+          29,
+          5
+        ],
+        [
+          9,
+          18,
+          14,
+          442,
+          16,
+          6
+        ],
+        [
+          13,
+          36,
+          27,
+          30,
+          291,
+          11
+        ],
+        [
+          5,
+          16,
+          13,
+          4,
+          6,
+          73
+        ]
+      ],
+      "parameters": 729318,
+      "head_parameters": 198,
+      "epoch_seconds": 0.2958363607356945,
+      "final_train_loss": 0.005045346246519474
+    },
+    "fiber_sigmoid": {
+      "task": "fiber",
+      "classes": 2,
+      "chance_level": 0.5,
+      "accuracy": 0.9097481343283582,
+      "macro_f1": 0.9054230645937488,
+      "balanced_accuracy": 0.9045575646401118,
+      "kappa": 0.8108513914533984,
+      "mcc": 0.8108989413228256,
+      "majority_accuracy": 0.6044776119402985,
+      "per_seed": [
+        {
+          "accuracy": 0.9090485074626866,
+          "macro_f1": 0.9047591060094844,
+          "balanced_accuracy": 0.9041826811087817,
+          "kappa": 0.8095203382417263,
+          "mcc": 0.8095392632935606,
+          "majority_accuracy": 0.6044776119402985
+        },
+        {
+          "accuracy": 0.9104477611940298,
+          "macro_f1": 0.9060870231780132,
+          "balanced_accuracy": 0.9049324481714418,
+          "kappa": 0.8121824446650703,
+          "mcc": 0.8122586193520905,
+          "majority_accuracy": 0.6044776119402985
+        }
+      ],
+      "confusion_seed0": [
+        [
+          1202,
+          94
+        ],
+        [
+          101,
+          747
+        ]
+      ],
+      "parameters": 729153,
+      "head_parameters": 33,
+      "epoch_seconds": 0.29641315414718516,
+      "final_train_loss": 0.005139933988875174
+    },
+    "fiber_softmax2": {
+      "task": "fiber",
+      "classes": 2,
+      "chance_level": 0.5,
+      "accuracy": 0.9151119402985075,
+      "macro_f1": 0.911145636545418,
+      "balanced_accuracy": 0.9107267645003494,
+      "kappa": 0.8222923164756638,
+      "mcc": 0.8223025283764442,
+      "majority_accuracy": 0.6044776119402985,
+      "per_seed": [
+        {
+          "accuracy": 0.9132462686567164,
+          "macro_f1": 0.9092111158465288,
+          "balanced_accuracy": 0.9088778243652458,
+          "kappa": 0.8184228931110852,
+          "mcc": 0.8184291328873601,
+          "majority_accuracy": 0.6044776119402985
+        },
+        {
+          "accuracy": 0.9169776119402985,
+          "macro_f1": 0.9130801572443072,
+          "balanced_accuracy": 0.912575704635453,
+          "kappa": 0.8261617398402424,
+          "mcc": 0.8261759238655284,
+          "majority_accuracy": 0.6044776119402985
+        }
+      ],
+      "confusion_seed0": [
+        [
+          1205,
+          91
+        ],
+        [
+          95,
+          753
+        ]
+      ],
+      "parameters": 729186,
+      "head_parameters": 66,
+      "epoch_seconds": 0.3804417906019163,
+      "final_train_loss": 0.0038865616989579945
+    },
+    "trash_sigmoid": {
+      "task": "trash",
+      "classes": 2,
+      "chance_level": 0.5,
+      "accuracy": 0.962919776119403,
+      "macro_f1": 0.7977629341776942,
+      "balanced_accuracy": 0.7649541025219369,
+      "kappa": 0.5958887393705719,
+      "mcc": 0.6017989790304745,
+      "majority_accuracy": 0.945429104477612,
+      "per_seed": [
+        {
+          "accuracy": 0.9631529850746269,
+          "macro_f1": 0.7994997437163147,
+          "balanced_accuracy": 0.767090854658689,
+          "kappa": 0.599345236405613,
+          "mcc": 0.6050445374337164,
+          "majority_accuracy": 0.945429104477612
+        },
+        {
+          "accuracy": 0.9626865671641791,
+          "macro_f1": 0.7960261246390737,
+          "balanced_accuracy": 0.7628173503851846,
+          "kappa": 0.5924322423355307,
+          "mcc": 0.5985534206272326,
+          "majority_accuracy": 0.945429104477612
+        }
+      ],
+      "confusion_seed0": [
+        [
+          2001,
+          26
+        ],
+        [
+          53,
+          64
+        ]
+      ],
+      "parameters": 729153,
+      "head_parameters": 33,
+      "epoch_seconds": 0.5541203315721465,
+      "final_train_loss": 0.0014230418006309711
+    },
+    "trash_sigmoid_weighted": {
+      "task": "trash",
+      "classes": 2,
+      "chance_level": 0.5,
+      "accuracy": 0.9510261194029851,
+      "macro_f1": 0.783445333044651,
+      "balanced_accuracy": 0.8089994476279627,
+      "kappa": 0.5672574537288662,
+      "mcc": 0.5709613705703621,
+      "majority_accuracy": 0.945429104477612,
+      "per_seed": [
+        {
+          "accuracy": 0.957089552238806,
+          "macro_f1": 0.7953646643842722,
+          "balanced_accuracy": 0.8001256540970404,
+          "kappa": 0.5907361222347178,
+          "mcc": 0.5908296666441685,
+          "majority_accuracy": 0.945429104477612
+        },
+        {
+          "accuracy": 0.9449626865671642,
+          "macro_f1": 0.7715260017050298,
+          "balanced_accuracy": 0.8178732411588849,
+          "kappa": 0.5437787852230145,
+          "mcc": 0.5510930744965558,
+          "majority_accuracy": 0.945429104477612
+        }
+      ],
+      "confusion_seed0": [
+        [
+          1979,
+          48
+        ],
+        [
+          44,
+          73
+        ]
+      ],
+      "parameters": 729153,
+      "head_parameters": 33,
+      "epoch_seconds": 0.3274462346822176,
+      "final_train_loss": 0.01503029988127624
+    },
+    "fiber_from_six": {
+      "task": "fiber",
+      "classes": 2,
+      "chance_level": 0.5,
+      "accuracy": 0.913945895522388,
+      "macro_f1": 0.9098740342799316,
+      "balanced_accuracy": 0.9092527078965758,
+      "kappa": 0.819750766256818,
+      "mcc": 0.8197749579328115,
+      "majority_accuracy": 0.6044776119402985,
+      "per_seed": [
+        {
+          "accuracy": 0.9211753731343284,
+          "macro_f1": 0.917492024983565,
+          "balanced_accuracy": 0.9170670277195434,
+          "kappa": 0.8349849893613922,
+          "mcc": 0.8349949404350073,
+          "majority_accuracy": 0.6044776119402985
+        },
+        {
+          "accuracy": 0.9067164179104478,
+          "macro_f1": 0.9022560435762982,
+          "balanced_accuracy": 0.9014383880736081,
+          "kappa": 0.8045165431522437,
+          "mcc": 0.8045549754306156,
+          "majority_accuracy": 0.6044776119402985
+        }
+      ],
+      "confusion_seed0": [
+        [
+          1214,
+          82
+        ],
+        [
+          87,
+          761
+        ]
+      ]
+    },
+    "trash_from_six": {
+      "task": "trash",
+      "classes": 2,
+      "chance_level": 0.5,
+      "accuracy": 0.9652518656716418,
+      "macro_f1": 0.8179743682821099,
+      "balanced_accuracy": 0.7943752925252678,
+      "kappa": 0.6360912720753786,
+      "mcc": 0.6387009065309768,
+      "majority_accuracy": 0.945429104477612,
+      "per_seed": [
+        {
+          "accuracy": 0.9631529850746269,
+          "macro_f1": 0.8065810584735553,
+          "balanced_accuracy": 0.7831981919303084,
+          "kappa": 0.6133215228250252,
+          "mcc": 0.6159910818830002,
+          "majority_accuracy": 0.945429104477612
+        },
+        {
+          "accuracy": 0.9673507462686567,
+          "macro_f1": 0.8293676780906644,
+          "balanced_accuracy": 0.8055523931202273,
+          "kappa": 0.6588610213257321,
+          "mcc": 0.6614107311789532,
+          "majority_accuracy": 0.945429104477612
+        }
+      ],
+      "confusion_seed0": [
+        [
+          1997,
+          30
+        ],
+        [
+          49,
+          68
+        ]
+      ]
+    }
+  },
+  "comparisons": {
+    "fiber_sigmoid_vs_fiber_softmax2": [
+      {
+        "only_a_correct": 52,
+        "only_b_correct": 61,
+        "discordant": 113,
+        "p_value": 0.45185326866574904
+      },
+      {
+        "only_a_correct": 56,
+        "only_b_correct": 70,
+        "discordant": 126,
+        "p_value": 0.24670624718941922
+      }
+    ],
+    "fiber_sigmoid_vs_fiber_from_six": [
+      {
+        "only_a_correct": 62,
+        "only_b_correct": 88,
+        "discordant": 150,
+        "p_value": 0.04086849386649698
+      },
+      {
+        "only_a_correct": 85,
+        "only_b_correct": 77,
+        "discordant": 162,
+        "p_value": 0.5824757301133519
+      }
+    ],
+    "six_softmax_vs_six_ovr": [
+      {
+        "only_a_correct": 135,
+        "only_b_correct": 140,
+        "discordant": 275,
+        "p_value": 0.8094467255252848
+      },
+      {
+        "only_a_correct": 124,
+        "only_b_correct": 132,
+        "discordant": 256,
+        "p_value": 0.6618328607844085
+      }
+    ],
+    "trash_sigmoid_vs_weighted": [
+      {
+        "only_a_correct": 39,
+        "only_b_correct": 26,
+        "discordant": 65,
+        "p_value": 0.1360323948778946
+      },
+      {
+        "only_a_correct": 68,
+        "only_b_correct": 30,
+        "discordant": 98,
+        "p_value": 0.0001561583170063298
+      }
+    ]
+  },
+  "initial_gradients": {
+    "six_softmax": {
+      "initial_loss": 1.4477202892303467,
+      "initial_gradient_norm": 0.8555783033370972,
+      "analytic_vs_autograd_max_error": 5.960464477539063e-08
+    },
+    "six_ovr": {
+      "initial_loss": 3.321258068084717,
+      "initial_gradient_norm": 1.046403408050537,
+      "analytic_vs_autograd_max_error": 0.0
+    },
+    "fiber_sigmoid": {
+      "initial_loss": 1.1073474884033203,
+      "initial_gradient_norm": 0.6544065475463867,
+      "analytic_vs_autograd_max_error": 0.0
+    },
+    "fiber_softmax2": {
+      "initial_loss": 0.322189062833786,
+      "initial_gradient_norm": 0.36654916405677795,
+      "analytic_vs_autograd_max_error": 5.960464477539063e-08
+    },
+    "trash_sigmoid": {
+      "initial_loss": 0.4366450607776642,
+      "initial_gradient_norm": 0.34559348225593567,
+      "analytic_vs_autograd_max_error": 0.0
+    },
+    "trash_sigmoid_weighted": {
+      "initial_loss": 0.4366450607776642,
+      "initial_gradient_norm": 0.34559348225593567,
+      "analytic_vs_autograd_max_error": 0.0
+    }
+  },
+  "note": "Out-of-fold predictions on train + val; test split not read."
+}

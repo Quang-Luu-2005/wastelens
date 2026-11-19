@@ -10,7 +10,7 @@
 | Module 2 hiện Top-1, confidence, thời gian xử lý và xác suất mọi lớp | WL-06, WL-07 | Ảnh: thẻ kết quả và bảng 6 lớp. Video: nhãn trên từng khung, biểu đồ xác suất 6 lớp theo thời gian, thời gian từng giai đoạn |
 | Snapshot và export | WL-08 | Ảnh: PNG có chú thích, PNG sau xử lý, JSON. Video: MP4 H.264 có nhãn, CSV theo khung, JSON, snapshot PNG |
 | Phân tích kết hợp filter OpenCV với mô hình | WL-09 | [Phân tích](filter-experiment.md) và [kết quả](../reports/filter-robustness-20261119/results.md): 76 điều kiện × 3 mô hình trên 377 ảnh test, McNemar + Holm, đối chứng bộ lọc khôi phục trên ảnh sạch |
-| Phân tích binary và multi-class | WL-10 | Bảng so sánh loss, gradient, cập nhật trọng số và độ phức tạp |
+| Phân tích binary và multi-class | WL-10 | [Lý thuyết và thực nghiệm](binary-vs-multiclass.md): loss, gradient, cập nhật trọng số, độ phức tạp; [kết quả](../reports/binary-vs-multiclass-20261119/results.md) CV 5 fold × 2 seed với κ, MCC, balanced accuracy |
 | Sơ đồ kiến trúc, ảnh giao diện và video demo | WL-11, WL-12 | Sơ đồ từ đầu vào đến UI, ảnh từng chức năng và link demo mở được khi không đăng nhập |
 | Báo cáo, bảng tự chấm và gói mã nguồn | WL-11, WL-13 | Bảng tự chấm 0–100% theo yêu cầu, pseudo-code, báo cáo nguồn và PDF trong `doc/`, mã có chú thích trong `source/` |
 | Webcam real-time (bonus) | WL-14 | Demo nhận diện webcam bằng ROI cố định nếu thực hiện |
