@@ -2,6 +2,22 @@
 
 WasteLens is a six-class waste classification project for Digital Image & Video Processing Lab03. It extends the Horse or Human MLP from Lab02 through from-scratch experiments. The app offers the adapted baseline, the improved MLP ensemble and an ImageNet-pretrained MobileNetV3 Large fine-tuned for comparison.
 
+## Quick start (Windows)
+
+You need Python 3.12 and an internet connection for the first run. Copy the three model files (`wastelens-baseline.pt`, `wastelens-ensemble.pt`, `wastelens-mobilenetv3.pt`) from the project's Google Drive folder into `models\`. Then run from this folder, in Command Prompt or PowerShell:
+
+```powershell
+.\run.bat
+```
+
+The first run creates `.venv`, installs CPU-only PyTorch and the pinned requirements (about 300 MB), downloads and verifies the TrashNet sample images and the webcam detector, and then opens the app at http://localhost:8501. Later runs start the app directly.
+
+- `.\run.bat setup` only installs.
+- `.\run.bat test` runs the unit tests.
+- Double-clicking `run.bat` also works.
+
+The script always runs from its own folder, so Streamlit picks up the light theme in `.streamlit\config.toml`. If the dataset or detector download fails, the image and video modes still work with your own files.
+
 ## Run locally
 
 Use Python 3.12. These PowerShell commands install the CPU builds and prepare the dataset from a fresh clone.
