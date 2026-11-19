@@ -95,6 +95,21 @@ def evaluate(output: Path, threads: int, limit: int | None):
             row["mcnemar_p_holm"] = adjusted
         rows += model_rows
 
+    # Did the restoration filter help? Pair each rescue with the corruption alone, per model.
+    rescues = []
+    for key in models:
+        for corruption, severity, restorers in RESCUES:
+            damaged = predictions[key][f"{corruption}_{severity}"] == labels
+            for restorer in restorers:
+                repaired = predictions[key][f"rescue_{corruption}_{severity}_{restorer}"] == labels
+                test = mcnemar_exact(damaged, repaired)
+                rescues.append({"model": key, "corruption": f"{corruption}_{severity}", "restorer": restorer,
+                                "corrupted_correct": int(damaged.sum()), "rescued_correct": int(repaired.sum()),
+                                "lost": test["only_a_correct"], "gained": test["only_b_correct"],
+                                "mcnemar_p": test["p_value"]})
+    for row, adjusted in zip(rescues, holm([row["mcnemar_p"] for row in rescues]), strict=True):
+        row["mcnemar_p_holm"] = adjusted
+
     summary = {}
     for key in models:
         clean = next(r for r in rows if r["model"] == key and r["condition"] == "clean")["accuracy"]
@@ -108,7 +123,8 @@ def evaluate(output: Path, threads: int, limit: int | None):
                         **{f"{key}__{name}": value for key in models for name, value in predictions[key].items()})
     report = {"manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(), "images": len(labels),
               "classes": classes, "checkpoints": {key: MODEL_PROFILES[key].filename for key in models},
-              "seconds": time.perf_counter() - started, "summary": summary, "rows": rows}
+              "seconds": time.perf_counter() - started, "summary": summary, "rows": rows,
+              "rescue_vs_corrupted": rescues}
     (output / "results.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     with (output / "results.csv").open("w", newline="", encoding="utf-8") as stream:
         fields = ["model", "condition", "family", "group", "severity", "level", "correct", "images", "accuracy",
@@ -238,6 +254,16 @@ def markdown(report: dict, output: Path):
         for name in dict.fromkeys(r["condition"] for r in rows if r["family"] == family):
             label = next(r["label"] for r in rows if r["condition"] == name)
             lines.append(f"| {label} | " + " | ".join(cell(k, name) for k in keys) + " |")
+    lines += ["", "## Khôi phục so với ảnh hỏng (cùng mô hình, theo cặp)", "",
+              "Số ảnh đúng khi chỉ bị suy giảm → sau bộ lọc khôi phục; mất/được = ảnh chỉ đúng ở một bên. "
+              "p theo McNemar chính xác, hiệu chỉnh Holm trên toàn bộ bảng.", "",
+              "| Mô hình | Suy giảm → bộ lọc | Đúng | Thay đổi | Mất / được | p (Holm) |",
+              "| --- | --- | ---: | ---: | ---: | ---: |"]
+    for r in report["rescue_vs_corrupted"]:
+        lines.append(f"| {MODEL_NAMES[r['model']]} | {r['corruption']} → {RESTORERS[r['restorer']][0]} "
+                     f"| {r['corrupted_correct']} → {r['rescued_correct']} "
+                     f"| {r['rescued_correct'] - r['corrupted_correct']:+d} "
+                     f"| {r['lost']} / {r['gained']} | {r['mcnemar_p_holm']:.2g} |")
     (output / "results.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 

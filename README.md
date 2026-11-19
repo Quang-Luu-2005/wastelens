@@ -104,6 +104,18 @@ The operations live in [`wastelens.ops`](src/wastelens/ops.py) as functions from
 
 The calibrated confidence is reliable only for photos like TrashNet's. Shifting the hue of a held-out cardboard photo by 40 OpenCV units flips the prediction to glass at 97% confidence. Random-noise images can also receive confident labels.
 
+### Filter x model experiment
+
+[`scripts/filter_experiment.py`](scripts/filter_experiment.py) applies 76 OpenCV conditions to the 377 test photos at their original size, as Module 1 does: Module 1 filters, nine corruptions at five severities, and restoration filters after a corruption. It evaluates all three checkpoints and compares each condition with the clean predictions by exact McNemar with Holm correction.
+
+| Model | Clean | Mean over 45 corruptions | Relative drop |
+| --- | ---: | ---: | ---: |
+| Baseline Lab 2 | 58.6% | 47.8% | 18.5% |
+| Improved MLP ensemble | 85.7% | 62.1% | 27.5% |
+| MobileNetV3 | 94.7% | 84.2% | 11.1% |
+
+The descriptor ensemble is robust to blur and noise but loses 26 points under a 5% warm colour cast and 61 points when the image is darkened to V = 0.3. MobileNetV3 is robust to colour but falls to 43.8% under 15% salt-and-pepper noise. No Module 1 filter significantly improves accuracy on clean TrashNet photos. A median filter recovers salt-and-pepper damage almost completely, and gray-world recovers most of a colour cast. See the [analysis](docs/filter-experiment.md) and the [tables and figures](reports/filter-robustness-20261119/results.md).
+
 To reproduce the deployed models' test scores and check that PIL/OpenCV inputs agree:
 
 ```powershell
