@@ -99,3 +99,14 @@ def paired_bootstrap(labels: np.ndarray, predicted_a: np.ndarray, predicted_b: n
     quantiles = (100 * alpha / 2, 100 * (1 - alpha / 2))
     return {name: [float(value) for value in np.percentile(values, quantiles)]
             for name, values in draws.items() if values}
+
+
+def holm(p_values: list[float]) -> list[float]:
+    """Holm-Bonferroni adjusted p-values (family-wise error control), in the input order."""
+    order = sorted(range(len(p_values)), key=p_values.__getitem__)
+    adjusted, running = [0.0] * len(p_values), 0.0
+    for rank, index in enumerate(order):
+        # Multiply the k-th smallest p by (m - k), and keep the sequence non-decreasing.
+        running = max(running, min(1.0, (len(p_values) - rank) * p_values[index]))
+        adjusted[index] = running
+    return adjusted
