@@ -1,0 +1,75 @@
+// WasteLens architecture: input sources -> Module 1 (OpenCV) -> Module 2 (classifiers) -> UI and exports.
+// Render from this folder:
+//   dot -Tsvg architecture.dot -o architecture.svg
+//   dot -Tpng -Gdpi=200 architecture.dot -o architecture.png
+digraph WasteLens {
+  graph [rankdir=TB, fontname="Segoe UI", fontsize=12, nodesep=0.3, ranksep=0.42, pad=0.2, newrank=true,
+         bgcolor="white"];
+  node  [shape=box, style="rounded,filled", fontname="Segoe UI", fontsize=11, fillcolor="#ffffff",
+         color="#5f6b7a", penwidth=1.1, margin="0.14,0.07"];
+  edge  [color="#5f6b7a", arrowsize=0.7, fontname="Segoe UI", fontsize=9, fontcolor="#44505c"];
+
+  subgraph cluster_input {
+    label="Đầu vào"; style="rounded,filled"; fillcolor="#eef4fb"; color="#9db7d5"; fontcolor="#1d4f86";
+    image  [label="Ảnh JPG / PNG\n(upload hoặc ảnh tập test)"];
+    video  [label="Video MP4 / MOV / AVI / MKV / WEBM"];
+    webcam [label="Webcam trình duyệt\n1–5 khung phân tích / giây"];
+  }
+
+  subgraph cluster_frames {
+    label="Tách khung & phát hiện vật"; style="rounded,filled"; fillcolor="#f4f1fa"; color="#b6a8d6"; fontcolor="#4a3787";
+    decode   [label="PyAV giải mã\nphân loại mỗi N khung"];
+    detector [label="SSDLite320 MobileNetV3 (COCO)\n→ crop từng vật, IoU tracker"];
+  }
+
+  subgraph cluster_m1 {
+    label="Module 1 · Xử lý ảnh OpenCV (ops.py)"; style="rounded,filled"; fillcolor="#eef8f0"; color="#9ccaa5"; fontcolor="#1f6b33";
+    ops [label=<<b>Màu</b>: gamma, tương phản, độ sáng, ảnh xám, HSV, CLAHE<br align="left"/><b>Hình học</b>: xoay, phóng, crop trung tâm, lật<br align="left"/><b>Làm mượt</b>: Gaussian, median, bilateral<br align="left"/><b>Nhiễu thử nghiệm</b>: Gaussian, muối tiêu<br align="left"/>>];
+  }
+
+  subgraph cluster_m2 {
+    label="Module 2 · Phân loại 6 lớp (classifier.py)"; style="rounded,filled"; fillcolor="#fdf4e8"; color="#e0b77c"; fontcolor="#8a4b00";
+
+    baseline [label=<<b>1 · Baseline Lab 2</b><br/>RGB 64×64 = 12 288 giá trị<br/>MLP 128 → 32 → 6<br/><font point-size="9">train từ đầu</font>>];
+
+    subgraph cluster_ens {
+      label="2 · MLP cải tiến (ensemble 10 mạng, train từ đầu)"; style="rounded,dashed"; fillcolor="#fffaf2"; color="#d39b4a"; fontcolor="#8a4b00";
+      desc_a [label="HOG 1764 + HSV 504\n+ Lab 504 = 2772"];
+      desc_b [label="Pyramid HSV 504"];
+      mlp_a  [label="5 × MLP 256 → 64 → 32 → 6"];
+      mlp_b  [label="5 × MLP 256 → 64 → 32 → 6"];
+      avg    [label="Trung bình softmax 10 mạng\nhiệu chỉnh nhiệt độ T = 2,0"];
+      desc_a -> mlp_a; desc_b -> mlp_b; mlp_a -> avg; mlp_b -> avg;
+    }
+
+    mobilenet [label=<<b>3 · MobileNetV3 Large</b><br/>RGB 224×224, chuẩn hoá ImageNet<br/>fine-tune → 6 lớp<br/><font point-size="9">mốc tham chiếu (pretrained)</font>>];
+
+    probs [label="Xác suất 6 lớp → Top-1, confidence\n(MLP cải tiến: < 0,526 thì báo \"không chắc\")",
+           fillcolor="#fff3dc", color="#c98a2e"];
+    baseline -> probs; avg -> probs; mobilenet -> probs;
+  }
+
+  subgraph cluster_ui {
+    label="Giao diện Streamlit (app.py) & xuất kết quả"; style="rounded,filled"; fillcolor="#f6f6f6"; color="#b5b5b5"; fontcolor="#333333";
+    result [label="Ảnh: thẻ kết quả, bảng 6 lớp\nthời gian từng bước, so sánh 3 mô hình"];
+    vout   [label="Video: nhãn trên khung, làm mượt EMA\nbiểu đồ xác suất theo thời gian"];
+    live   [label="Webcam: khung và nhãn từng vật\nbảng xác suất vật đang chọn"];
+    export [label="Export: PNG có chú thích, PNG sau xử lý, JSON\nMP4 H.264 có nhãn, CSV theo khung, snapshot"];
+  }
+
+  { rank=same; image; video; webcam; }
+  { rank=same; decode; detector; }
+  { rank=same; baseline; mlp_a; mlp_b; mobilenet; }
+  image  -> ops;
+  video  -> decode -> ops;
+  webcam -> detector;
+  detector -> ops [label=" crop"];
+
+  ops -> baseline;
+  ops -> desc_a;
+  ops -> desc_b;
+  ops -> mobilenet;
+
+  probs -> result; probs -> vout; probs -> live;
+  result -> export; vout -> export;
+}

@@ -75,6 +75,8 @@ The Streamlit app offers three independently selectable checkpoints. Model weigh
 | Improved: 10 descriptor MLPs 256 → 64 → 32 → 6, from scratch | `models/wastelens-ensemble.pt` | 85.68% |
 | MobileNetV3 Large, ImageNet pretrained then fine-tuned | `models/wastelens-mobilenetv3.pt` | 94.69% |
 
+See [architecture and screenshots](docs/architecture-and-ui.md) for the pipeline diagram and one screenshot per feature.
+
 The centered image workbench follows the supplied Stitch design. Upload an image or choose one of the six sample buttons, then select the model and processing level in the compact toolbar below the image. The improved MLP is the default. Click **Phân loại** to run inference; changing the image, model, settings or checkpoint invalidates the previous result and its downloads until you classify again.
 
 Processing levels are **Gốc** (identity), **Nhẹ** (Gaussian σ=0.4), **Vừa** (gamma 1.15, CLAHE 2.0, Gaussian σ=0.8), and **Mạnh** (gamma 1.25, contrast 1.15, CLAHE 3.0, Gaussian σ=1.2). They are experimental filter presets, not quality guarantees. **Chỉnh sửa** opens the full Module 1 dialog; settings take effect only after **Áp dụng**. Preview modes show the original, processed image or both side by side.
