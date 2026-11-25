@@ -28,8 +28,8 @@ from wastelens.classifier import Prediction, WasteClassifier
 from wastelens.profiles import DEFAULT_MODEL, MODEL_PROFILES
 from wastelens.workbench import PRESETS, PRESET_DESCRIPTIONS, assess_prediction, describe_operations, request_signature
 from wastelens.streaming import DETECTOR_WEIGHTS, ObjectDetector, ObjectTracker, decode_frame, recognize_objects
-from wastelens.video import (VideoSettings, make_sample_video, probe, process_video, read_frame, records_csv,
-                             segment_agreement)
+from wastelens.video import (VideoSettings, make_sample_video, objects_csv, probe, process_video, read_frame,
+                             records_csv, segment_agreement)
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_SIDE = 1024
@@ -817,6 +817,9 @@ def render_video():
     key = model_col.selectbox("Mô hình phân loại", list(MODEL_NAMES), format_func=MODEL_NAMES.get,
                               index=list(MODEL_NAMES).index(DEFAULT_MODEL), key="video_model")
     preset = processing_col.selectbox("Xử lý khung hình (Module 1)", list(options), key="video_preset")
+    detect = st.toggle("Phát hiện từng vật (SSDLite) rồi phân loại từng vùng cắt", key="video_detect",
+                       help="Tắt: phân loại cả khung hình như một ảnh. Bật: tìm tối đa N vật mỗi khung, "
+                            "theo dõi ID và gắn nhãn rác riêng cho từng vật, giống tab Webcam.")
     with settings_col.popover("Thiết lập video", width="stretch"):
         every = st.slider("Phân loại mỗi N khung hình", 1, 30, max(1, round(info["fps"] / 5)), key="video_every",
                           help="N nhỏ chính xác theo thời gian hơn nhưng chậm hơn.")
@@ -825,8 +828,18 @@ def render_video():
                                 format_func=lambda size: f"{size} px", key="video_max_side")
         smoothing = st.slider("Trọng số dự đoán mới (EMA)", 0.1, 1.0, 0.5, 0.1, key="video_smoothing",
                               help="1,0 = không làm mượt; nhỏ hơn = nhãn ổn định hơn nhưng đổi chậm hơn.")
+        detector_threshold, max_objects = 0.45, 3
+        if detect:
+            detector_threshold = st.slider("Ngưỡng phát hiện vật", .2, .9, .45, .05, key="video_detector_threshold",
+                                           help="Thấp hơn bắt được vật nhỏ hơn nhưng có thêm khung thừa.")
+            max_objects = st.slider("Số vật tối đa mỗi khung", 1, 8, 3, key="video_max_objects")
     settings = VideoSettings(classify_every=every, max_seconds=float(max_seconds), max_side=max_side,
-                             smoothing=smoothing)
+                             smoothing=smoothing, detect_objects=detect, detector_threshold=detector_threshold,
+                             max_objects=max_objects)
+    if detect and not DETECTOR_WEIGHTS.is_file():
+        st.info("Cần tải bộ phát hiện vật trước khi bật phát hiện từng vật.")
+        st.code(".venv\\Scripts\\python.exe scripts/prepare_detector.py", language="powershell")
+        return
     params = options[preset]
     duration = info["duration_s"]
     st.caption(f"{chosen['name']} · {info['width']}×{info['height']} · {info['fps']:.2f} fps"
@@ -845,9 +858,11 @@ def render_video():
         progress = st.progress(0.0, text="Đang xử lý video…")
         classifier = profile_model(key)
         destination = VIDEO_DIR / f"output-{signature[:16]}.mp4"
+        detector = load_detector(str(DETECTOR_WEIGHTS), DETECTOR_WEIGHTS.stat().st_mtime_ns) if detect else None
         try:
             result = process_video(source, destination, classifier, params, settings,
-                                   progress=lambda fraction, text: progress.progress(fraction, text=text))
+                                   progress=lambda fraction, text: progress.progress(fraction, text=text),
+                                   detector=detector)
         except (ValueError, RuntimeError, OSError):
             progress.empty()
             st.error("Không xử lý được video này. Hãy thử tệp MP4 (H.264) khác.")
@@ -870,10 +885,9 @@ def render_video():
     render_video_result(bundle)
 
 
-def render_video_result(bundle):
-    """Processed-video view: players, summary, probability timeline, snapshot and downloads."""
-    result, key, classes = bundle["result"], bundle["model_key"], bundle["classes"]
-    summary = result.summary()
+def render_video_players(bundle):
+    """Input and annotated output side by side."""
+    result = bundle["result"]
     before, after = st.columns(2)
     with before:
         st.caption("Video gốc")
@@ -883,6 +897,89 @@ def render_video_result(bundle):
         st.video(str(result.output))
         if not result.browser_playable:
             st.caption("Trình duyệt có thể không phát được codec dự phòng; hãy tải video về để xem.")
+
+
+def render_video_detection_result(bundle):
+    """Detection-mode view: one row per tracked object, a per-frame snapshot and downloads."""
+    result, key, classes = bundle["result"], bundle["model_key"], bundle["classes"]
+    summary = result.summary()
+    render_video_players(bundle)
+    tracks = summary["tracks"]
+    with st.container(key="video_summary", border=True):
+        st.html(f'<div class="prediction-summary"><div class="prediction-symbol" style="background:#0f766e">♻</div>'
+                f'<div class="prediction-copy"><div>ĐÃ THEO DÕI: <strong>{len(tracks)} vật</strong></div>'
+                f'<p>Có vật ở {summary["frames_with_objects"]}/{summary["analysed_frames"]} khung được phân tích · '
+                f'Mô hình: <strong>{MODEL_NAMES[key]}</strong> · Xử lý: {escape(bundle["preset"])}</p></div></div>')
+        stats = st.columns(4)
+        stats[0].metric("Khung hình đã xử lý", f"{result.frames_read}",
+                        help="Đã dừng ở giới hạn thời gian." if result.truncated else None)
+        stats[1].metric("Lượt phát hiện", f"{summary['detections']}")
+        stats[2].metric("Tốc độ xử lý (khung/s)", f"{summary['processing_fps']:.0f}")
+        stats[3].metric("Phân loại TB mỗi vật (ms)",
+                        f"{summary['mean_inference_ms']:.1f}" if summary["mean_inference_ms"] is not None else "–")
+        st.caption("SSDLite chỉ khoanh vùng (tên lớp COCO ở cột “Bộ phát hiện”); nhãn rác do mô hình 6 lớp quyết định "
+                   "và được làm mượt EMA riêng cho từng ID. ID có thể đổi khi vật bị che hoặc di chuyển nhanh.")
+    if not tracks:
+        st.warning("Không phát hiện được vật nào. Thử hạ ngưỡng phát hiện hoặc tăng độ phân giải trong Thiết lập video.")
+    else:
+        st.markdown("**Từng vật được theo dõi**")
+        st.dataframe(pd.DataFrame([{
+            "ID": f"#{t['object_id']}", "Bộ phát hiện (COCO)": t["detector_category"],
+            "Nhãn rác chiếm ưu thế": LABELS_VI[t["dominant_label"]], "Tỷ lệ lần thấy": f"{t['dominant_share']:.0%}",
+            "Không chắc": f"{t['uncertain_share']:.0%}", "Confidence TB": f"{t['mean_confidence']:.0%}",
+            "Xuất hiện (s)": f"{t['first_s']:.1f}–{t['last_s']:.1f}", "Số lần thấy": t["appearances"],
+        } for t in tracks]), hide_index=True, width="stretch")
+
+    snapshot, frame_index = None, 0
+    frames = sorted({record.frame for record in result.objects})
+    if frames:
+        st.markdown("**Snapshot một khung hình**")
+        chosen = st.select_slider("Thời điểm", options=frames, format_func=lambda f: f"{f / result.fps:.1f} s",
+                                  key="video_detection_snapshot")
+        frame_index = chosen
+        snapshot = read_frame(result.output, chosen)
+        left, right = st.columns([3, 2])
+        if snapshot is not None:
+            with left:
+                show_image(snapshot, f"Khung {chosen} · {chosen / result.fps:.1f} s")
+        with right:
+            for record in [r for r in result.objects if r.frame == chosen]:
+                st.markdown(f"**#{record.object_id} · {LABELS_VI[record.smoothed_label]} "
+                            f"{record.smoothed_confidence:.1%}**")
+                st.caption(f"Bộ phát hiện: {record.detector_category} ({record.detector_confidence:.0%}) · "
+                           f"Khung này: {LABELS_VI[record.top_class]} {record.confidence:.1%}")
+
+    stamp = bundle["time"].replace(":", "").replace("-", "")
+    record_json = {
+        "time": bundle["time"], "source": bundle["name"], "module1": ops.OpsParams(**bundle["params"]).changed(),
+        "preset": bundle["preset"], "video_settings": bundle["settings"], "summary": summary,
+        "model": MODEL_PROFILES[key].filename, "detector": DETECTOR_WEIGHTS.name,
+        "calibrated": bundle["calibrated"], "uncertain_threshold": bundle["threshold"],
+    }
+    with st.container(key="video_exports"):
+        video_col, csv_col, json_col, snap_col = st.columns(4)
+        video_col.download_button("Tải video kết quả", result.output.read_bytes(), f"wastelens-{key}-{stamp}.mp4",
+                                  "video/mp4", icon=":material/movie:", width="stretch", on_click="ignore")
+        csv_col.download_button("Tải CSV theo vật", objects_csv(result, classes).encode("utf-8"),
+                                f"wastelens-{key}-{stamp}-objects.csv", "text/csv", icon=":material/table:",
+                                width="stretch", on_click="ignore")
+        json_col.download_button("Tải JSON", json.dumps(record_json, ensure_ascii=False, indent=2).encode("utf-8"),
+                                 f"wastelens-{key}-{stamp}.json", "application/json", icon=":material/data_object:",
+                                 width="stretch", on_click="ignore")
+        ok, png = cv2.imencode(".png", snapshot) if snapshot is not None else (False, None)
+        snap_col.download_button("Tải snapshot", png.tobytes() if ok else b"",
+                                 f"wastelens-{key}-{stamp}-t{frame_index / result.fps:.1f}s.png", "image/png",
+                                 disabled=not ok, icon=":material/photo_camera:", width="stretch", on_click="ignore")
+
+
+def render_video_result(bundle):
+    """Processed-video view: players, summary, probability timeline, snapshot and downloads."""
+    result, key, classes = bundle["result"], bundle["model_key"], bundle["classes"]
+    if getattr(result, "detection", False):  # Results kept from before a code reload may lack the field.
+        render_video_detection_result(bundle)
+        return
+    summary = result.summary()
+    render_video_players(bundle)
     dominant = summary["dominant_confident_label"] or "uncertain"
     share = summary["label_shares"].get(dominant, 0.0)
     uncertain_note = (f" · Không chắc: {summary['uncertain_share']:.0%} số khung"

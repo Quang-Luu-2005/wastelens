@@ -3,6 +3,10 @@
 Pipeline per frame: decode (OpenCV, which applies rotation metadata) -> downscale to `max_side`
 -> Module 1 (`ops.apply`) -> classify every `classify_every` frames -> exponential moving
 average (EMA) of the class probabilities -> draw the smoothed label -> encode with PyAV.
+
+With `detect_objects`, the classify step instead runs the webcam pipeline on the processed
+frame: SSDLite finds objects, an IoU tracker keeps their IDs, each crop is classified, and the
+EMA is kept per object ID. The output video then shows a labelled box per object.
 """
 
 import csv
@@ -21,6 +25,9 @@ from . import ops
 
 UNCERTAIN = "uncertain"
 FALLBACK_FPS = 25.0  # Used when a container reports no usable frame rate.
+# Box colours per class in BGR, matching the app's class colours; orange marks "uncertain".
+CLASS_BGR = {"cardboard": (6, 119, 217), "glass": (199, 132, 2), "metal": (139, 116, 100),
+             "paper": (241, 102, 99), "plastic": (105, 150, 5), "trash": (72, 29, 225), UNCERTAIN: (0, 140, 255)}
 
 
 @dataclass(frozen=True)
@@ -29,10 +36,15 @@ class VideoSettings:
     max_seconds: float = 60.0   # Stop after this much input video, so long uploads stay interactive.
     max_side: int = 960         # Longest output side in pixels; frames are never upscaled.
     smoothing: float = 0.5      # EMA weight of the newest prediction; 1.0 disables smoothing.
+    detect_objects: bool = False      # Detect and classify each object instead of the whole frame.
+    detector_threshold: float = 0.45  # Minimum SSDLite score for a box to be kept.
+    max_objects: int = 3              # At most this many boxes per analysed frame.
 
     def __post_init__(self):
         if self.classify_every < 1 or self.max_seconds <= 0 or self.max_side < 64 or not 0 < self.smoothing <= 1:
             raise ValueError("Invalid video settings")
+        if not 0 < self.detector_threshold < 1 or self.max_objects < 1:
+            raise ValueError("Invalid detection settings")
 
 
 @dataclass
@@ -42,6 +54,24 @@ class FrameRecord:
     top_class: str              # Raw Top-1 of this frame.
     confidence: float
     smoothed_label: str         # Label drawn on the video: EMA Top-1, or "uncertain" below threshold.
+    smoothed_confidence: float
+    probabilities: dict[str, float]
+    smoothed_probabilities: dict[str, float]
+    inference_ms: float
+
+
+@dataclass
+class ObjectRecord:
+    """One detected object on one analysed frame (detection mode)."""
+    frame: int
+    time_s: float
+    object_id: int              # Tracker ID; stable while the object keeps overlapping its last box.
+    box: tuple[int, int, int, int]
+    detector_category: str      # COCO class from SSDLite, independent of the waste class.
+    detector_confidence: float
+    top_class: str              # Raw Top-1 of this crop.
+    confidence: float
+    smoothed_label: str         # EMA Top-1 of this object ID, or "uncertain" below threshold.
     smoothed_confidence: float
     probabilities: dict[str, float]
     smoothed_probabilities: dict[str, float]
@@ -63,6 +93,9 @@ class VideoResult:
     records: list[FrameRecord] = field(default_factory=list)
     stage_ms: dict[str, float] = field(default_factory=dict)  # Totals for decode, module1, classify, encode.
     wall_s: float = 0.0
+    detection: bool = False     # True when objects were detected and classified one by one.
+    objects: list[ObjectRecord] = field(default_factory=list)
+    analysed_frames: int = 0    # Frames on which the classify step ran (with or without detections).
 
     def label_shares(self) -> dict[str, float]:
         """Share of classified frames per smoothed label, largest first."""
@@ -70,11 +103,46 @@ class VideoResult:
         total = sum(counts.values()) or 1
         return {label: count / total for label, count in counts.most_common()}
 
+    def tracks(self) -> list[dict]:
+        """Per object ID: when it was seen, what the detector called it and its dominant waste label."""
+        by_id: dict[int, list[ObjectRecord]] = {}
+        for record in self.objects:
+            by_id.setdefault(record.object_id, []).append(record)
+        summaries = []
+        for object_id, records in sorted(by_id.items()):
+            labels = Counter(r.smoothed_label for r in records)
+            confident = [label for label, _ in labels.most_common() if label != UNCERTAIN]
+            dominant = confident[0] if confident else UNCERTAIN
+            summaries.append({
+                "object_id": object_id, "appearances": len(records),
+                "first_s": records[0].time_s, "last_s": records[-1].time_s,
+                "detector_category": Counter(r.detector_category for r in records).most_common(1)[0][0],
+                "dominant_label": dominant, "dominant_share": labels[dominant] / len(records),
+                "uncertain_share": labels[UNCERTAIN] / len(records),
+                "mean_confidence": float(np.mean([r.smoothed_confidence for r in records])),
+            })
+        return summaries
+
     def summary(self) -> dict:
         shares = self.label_shares()
         confident = [label for label in shares if label != UNCERTAIN]
         per_frame = max(self.frames_read, 1)
+        inference = [r.inference_ms for r in (self.objects if self.detection else self.records)]
+        if self.detection:
+            return {
+                "mode": "detection", "output_codec": self.codec, "browser_playable": self.browser_playable,
+                "fps": self.fps, "width": self.width, "height": self.height,
+                "frames_read": self.frames_read, "frames_written": self.frames_written,
+                "input_frames": self.input_frames, "truncated": self.truncated,
+                "analysed_frames": self.analysed_frames, "detections": len(self.objects),
+                "frames_with_objects": len({r.frame for r in self.objects}), "tracks": self.tracks(),
+                "mean_ms_per_frame": {stage: total / per_frame for stage, total in self.stage_ms.items()},
+                "mean_inference_ms": float(np.mean(inference)) if inference else None,
+                "processing_fps": self.frames_read / self.wall_s if self.wall_s else None,
+                "wall_seconds": self.wall_s,
+            }
         return {
+            "mode": "frame",
             "output_codec": self.codec, "browser_playable": self.browser_playable,
             "fps": self.fps, "width": self.width, "height": self.height,
             "frames_read": self.frames_read, "frames_written": self.frames_written,
@@ -84,7 +152,7 @@ class VideoResult:
             "dominant_confident_label": confident[0] if confident else None,
             "uncertain_share": shares.get(UNCERTAIN, 0.0), "label_shares": shares,
             "mean_ms_per_frame": {stage: total / per_frame for stage, total in self.stage_ms.items()},
-            "mean_inference_ms": (float(np.mean([r.inference_ms for r in self.records])) if self.records else None),
+            "mean_inference_ms": float(np.mean(inference)) if inference else None,
             "processing_fps": self.frames_read / self.wall_s if self.wall_s else None,
             "wall_seconds": self.wall_s,
         }
@@ -125,6 +193,22 @@ def draw_label(frame: np.ndarray, text: str, color: tuple[int, int, int]) -> np.
     return frame
 
 
+def draw_objects(frame: np.ndarray, objects: list[tuple[int, tuple, str, float]]) -> np.ndarray:
+    """A box per object coloured by its label, with "#id label nn%" on a filled tab above it."""
+    scale = max(0.45, min(frame.shape[1] / 1100, 1.0))
+    thickness = max(2, round(scale * 3))
+    for object_id, (x1, y1, x2, y2), label, confidence in objects:
+        color = CLASS_BGR.get(label, CLASS_BGR[UNCERTAIN])
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
+        text = f"#{object_id} {label} {confidence:.0%}"
+        (width, height), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, max(1, thickness - 1))
+        top = max(0, y1 - height - baseline - 8)  # Above the box, or inside it at the top edge of the frame.
+        cv2.rectangle(frame, (x1, top), (x1 + width + 10, top + height + baseline + 8), color, -1)
+        cv2.putText(frame, text, (x1 + 5, top + height + 4), cv2.FONT_HERSHEY_SIMPLEX, scale, (255, 255, 255),
+                    max(1, thickness - 1), cv2.LINE_AA)
+    return frame
+
+
 def _open_writer(path: Path, fps: float, width: int, height: int):
     """H.264 (libx264) when available, otherwise MPEG-4 Part 2, which some browsers cannot play."""
     import av  # Imported lazily: deployments without video support need not install PyAV.
@@ -145,14 +229,22 @@ def _open_writer(path: Path, fps: float, width: int, height: int):
 
 
 def process_video(source: Path, destination: Path, classifier, params: ops.OpsParams, settings: VideoSettings,
-                  progress: Callable[[float, str], None] | None = None) -> VideoResult:
+                  progress: Callable[[float, str], None] | None = None, detector=None) -> VideoResult:
     """Run the full pipeline and write the annotated video to `destination` (an .mp4 path).
 
     `classifier` needs `classify(bgr) -> Prediction`, `classes` and `threshold`
     (as `WasteClassifier` provides); the threshold is applied to the smoothed probabilities.
+    `detector` (an `ObjectDetector`) is required when `settings.detect_objects` is set.
     """
     import av
 
+    if settings.detect_objects and detector is None:
+        raise ValueError("Object detection needs a detector")
+    if settings.detect_objects:
+        from .streaming import ObjectTracker, recognize_objects  # Lazy: pulls in torchvision.
+        tracker, object_ema, drawn = ObjectTracker(), {}, []
+    objects: list[ObjectRecord] = []
+    analysed = 0
     info = probe(source)
     fps = info["fps"]
     limit = int(round(settings.max_seconds * fps))
@@ -178,7 +270,33 @@ def process_video(source: Path, destination: Path, classifier, params: ops.OpsPa
             t1 = time.perf_counter()
             processed = ops.apply(frame, params)
             t2 = time.perf_counter()
-            if frames_read % settings.classify_every == 0:
+            if settings.detect_objects and frames_read % settings.classify_every == 0:
+                analysed += 1
+                # Module 1 already ran on the whole frame, so crops get no second pass (identity params)
+                # and the boxes stay in the coordinates of the frame that is drawn and encoded.
+                found = recognize_objects(processed, detector, classifier, tracker, ops.OpsParams(),
+                                          threshold=settings.detector_threshold, max_objects=settings.max_objects)
+                drawn = []
+                for item in found:
+                    prediction, object_id = item["prediction"], item["id"]
+                    vector = np.array([prediction.probabilities[name] for name in classifier.classes])
+                    previous = object_ema.get(object_id)
+                    # One EMA per object ID, so two objects in the same frame never mix their evidence.
+                    ema = vector if previous is None else settings.smoothing * vector + (1 - settings.smoothing) * previous
+                    object_ema[object_id] = ema
+                    index = int(ema.argmax())
+                    object_label = classifier.classes[index] if ema[index] >= classifier.threshold else UNCERTAIN
+                    box = tuple(int(v) for v in item["box"])
+                    drawn.append((object_id, box, object_label, float(ema[index])))
+                    objects.append(ObjectRecord(
+                        frame=frames_read, time_s=frames_read / fps, object_id=object_id, box=box,
+                        detector_category=item["detector_category"],
+                        detector_confidence=float(item["detector_confidence"]), top_class=prediction.top_class,
+                        confidence=prediction.confidence, smoothed_label=object_label,
+                        smoothed_confidence=float(ema[index]), probabilities=prediction.probabilities,
+                        smoothed_probabilities={name: float(v) for name, v in zip(classifier.classes, ema)},
+                        inference_ms=prediction.timings_ms["total"]))
+            elif not settings.detect_objects and frames_read % settings.classify_every == 0:
                 prediction = classifier.classify(processed)
                 vector = np.array([prediction.probabilities[name] for name in classifier.classes])
                 # EMA: older evidence decays by (1 - smoothing) per classified frame.
@@ -200,7 +318,12 @@ def process_video(source: Path, destination: Path, classifier, params: ops.OpsPa
                 container, stream, codec = _open_writer(destination, fps, *out_size)
             if (processed.shape[1], processed.shape[0]) != (stream.width, stream.height):
                 processed = cv2.resize(processed, (stream.width, stream.height), interpolation=cv2.INTER_AREA)
-            overlay = draw_label(processed.copy(), f"{label} {label_confidence:.0%}  t={frames_read / fps:.1f}s", color)
+            if settings.detect_objects:
+                # Boxes from the last analysed frame are held until the next one, like the frame label.
+                overlay = draw_objects(processed.copy(), drawn)
+                overlay = draw_label(overlay, f"{len(drawn)} objects  t={frames_read / fps:.1f}s", (60, 60, 60))
+            else:
+                overlay = draw_label(processed.copy(), f"{label} {label_confidence:.0%}  t={frames_read / fps:.1f}s", color)
             for packet in stream.encode(av.VideoFrame.from_ndarray(overlay, format="bgr24")):
                 container.mux(packet)
             frames_written += 1
@@ -226,7 +349,8 @@ def process_video(source: Path, destination: Path, classifier, params: ops.OpsPa
         output=destination, codec=codec, browser_playable=codec == "libx264", fps=fps,
         width=stream.width, height=stream.height, frames_read=frames_read, frames_written=frames_written,
         input_frames=info["frames"], truncated=bool(truncated), records=records, stage_ms=stages,
-        wall_s=time.perf_counter() - started)
+        wall_s=time.perf_counter() - started, detection=settings.detect_objects, objects=objects,
+        analysed_frames=analysed if settings.detect_objects else len(records))
 
 
 def records_csv(result: VideoResult, classes: list[str]) -> str:
@@ -239,6 +363,22 @@ def records_csv(result: VideoResult, classes: list[str]) -> str:
         writer.writerow([record.frame, f"{record.time_s:.3f}", record.top_class, f"{record.confidence:.6f}",
                          record.smoothed_label, f"{record.smoothed_confidence:.6f}", f"{record.inference_ms:.2f}",
                          *[f"{record.probabilities[name]:.6f}" for name in classes],
+                         *[f"{record.smoothed_probabilities[name]:.6f}" for name in classes]])
+    return buffer.getvalue()
+
+
+def objects_csv(result: VideoResult, classes: list[str]) -> str:
+    """One row per detected object per analysed frame, with its box and all class probabilities."""
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow(["frame", "time_s", "object_id", "x1", "y1", "x2", "y2", "detector_category",
+                     "detector_confidence", "top_class", "confidence", "smoothed_label", "smoothed_confidence",
+                     "inference_ms", *[f"p_{name}" for name in classes], *[f"ema_{name}" for name in classes]])
+    for record in result.objects:
+        writer.writerow([record.frame, f"{record.time_s:.3f}", record.object_id, *record.box,
+                         record.detector_category, f"{record.detector_confidence:.4f}", record.top_class,
+                         f"{record.confidence:.6f}", record.smoothed_label, f"{record.smoothed_confidence:.6f}",
+                         f"{record.inference_ms:.2f}", *[f"{record.probabilities[name]:.6f}" for name in classes],
                          *[f"{record.smoothed_probabilities[name]:.6f}" for name in classes]])
     return buffer.getvalue()
 

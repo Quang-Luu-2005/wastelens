@@ -12,8 +12,9 @@ import numpy as np
 from wastelens.classifier import Prediction
 from wastelens.ops import OpsParams
 from wastelens.profiles import MODEL_PROFILES
-from wastelens.video import (VideoSettings, fit_size, make_sample_video, probe, process_video, read_frame,
-                             records_csv, segment_agreement)
+from wastelens.streaming import Detection
+from wastelens.video import (VideoSettings, fit_size, make_sample_video, objects_csv, probe, process_video,
+                             read_frame, records_csv, segment_agreement)
 
 CLASSES = ["cardboard", "glass", "metal", "paper", "plastic", "trash"]
 
@@ -44,6 +45,18 @@ class ScriptedClassifier:
         index = int(np.argmax(vector))
         return Prediction(label=CLASSES[index], top_class=CLASSES[index], confidence=float(vector[index]),
                           probabilities=dict(zip(CLASSES, map(float, vector))), timings_ms={"total": 1.0})
+
+
+class FixedDetector:
+    """Always finds the same two boxes, most confident first, honouring the detector's arguments."""
+
+    def __init__(self):
+        self.calls = []
+
+    def detect(self, frame, threshold=.45, max_objects=3):
+        self.calls.append((frame.shape, threshold, max_objects))
+        found = [Detection((5, 5, 40, 40), 0.9, "bottle"), Detection((50, 10, 95, 55), 0.6, "cup")]
+        return [d for d in found if d.score >= threshold][:max_objects]
 
 
 def one_hot(index, value=1.0):
@@ -144,6 +157,48 @@ class VideoTests(unittest.TestCase):
                                OpsParams(), VideoSettings(classify_every=2, smoothing=1.0))
         agreement = segment_agreement(unsure, segments)
         self.assertEqual((agreement["raw_top1"], agreement["smoothed"], agreement["smoothed_uncertain"]), (0.5, 0.0, 1.0))
+
+    def test_detection_mode_tracks_and_smooths_each_object_separately(self):
+        # Calls alternate between the two boxes: the bottle always looks like cardboard, the cup like glass.
+        classifier = ScriptedClassifier([one_hot(0), one_hot(1)] * 10)
+        detector = FixedDetector()
+        result = process_video(self.source, self.root / "objects.mp4", classifier, OpsParams(),
+                               VideoSettings(classify_every=5, smoothing=0.5, detect_objects=True), detector=detector)
+        self.assertEqual((result.frames_read, result.frames_written, result.analysed_frames), (23, 23, 5))
+        self.assertEqual(len(detector.calls), 5)
+        self.assertEqual(result.records, [])  # No whole-frame labels in detection mode.
+        self.assertEqual([r.frame for r in result.objects], [0, 0, 5, 5, 10, 10, 15, 15, 20, 20])
+        by_id = {}
+        for record in result.objects:
+            by_id.setdefault(record.object_id, set()).add((record.detector_category, record.smoothed_label))
+        # IDs survive across frames, and one object's evidence never leaks into the other's EMA.
+        self.assertEqual(by_id, {1: {("bottle", "cardboard")}, 2: {("cup", "glass")}})
+        self.assertTrue(all(r.smoothed_confidence == 1.0 for r in result.objects))
+        summary = result.summary()
+        self.assertEqual((summary["mode"], summary["detections"], summary["frames_with_objects"]), ("detection", 10, 5))
+        self.assertEqual([(t["object_id"], t["dominant_label"], t["appearances"]) for t in summary["tracks"]],
+                         [(1, "cardboard", 5), (2, "glass", 5)])
+        rows = list(csv.reader(io.StringIO(objects_csv(result, CLASSES))))
+        self.assertEqual(len(rows), 1 + 10)
+        self.assertEqual(len(rows[0]), 14 + 2 * len(CLASSES))
+        self.assertEqual(rows[1][2:7], ["1", "5", "5", "40", "40"])
+        with av.open(str(result.output)) as container:
+            self.assertEqual(sum(1 for _ in container.decode(container.streams.video[0])), 23)
+
+    def test_detection_settings_are_passed_on_and_validated(self):
+        detector = FixedDetector()
+        result = process_video(self.source, self.root / "one.mp4", ScriptedClassifier([one_hot(4)]), OpsParams(),
+                               VideoSettings(classify_every=10, detect_objects=True, detector_threshold=0.7,
+                                             max_objects=1), detector=detector)
+        self.assertEqual({call[1:] for call in detector.calls}, {(0.7, 1)})
+        self.assertEqual({r.detector_category for r in result.objects}, {"bottle"})
+        with self.assertRaises(ValueError):
+            process_video(self.source, self.root / "none.mp4", ScriptedClassifier([one_hot(0)]), OpsParams(),
+                          VideoSettings(detect_objects=True))
+        with self.assertRaises(ValueError):
+            VideoSettings(detector_threshold=1.0)
+        with self.assertRaises(ValueError):
+            VideoSettings(max_objects=0)
 
     @unittest.skipUnless(MODEL_PROFILES["improved"].checkpoint.is_file(), "deployed checkpoint not present")
     def test_real_ensemble_produces_normalized_probabilities(self):
