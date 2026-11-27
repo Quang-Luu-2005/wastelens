@@ -150,6 +150,22 @@ To reproduce the deployed models' test scores and check that PIL/OpenCV inputs a
 
 This writes `outputs/app-model-comparison.json` with hashes, confusion matrices and per-image probabilities. It does not train or tune models on test images.
 
+### External check: RealWaste
+
+The test split shares TrashNet's white background, so it overstates real-world accuracy. [RealWaste](https://archive.ics.uci.edu/dataset/908/realwaste) (Single et al., 2023, CC BY 4.0) has 4,752 photos of waste at a landfill. Six of its nine folders map to the TrashNet classes (`Miscellaneous Trash` becomes `trash`), giving 3,587 images that no model has seen in training, selection or calibration. Download and unzip it (656.6 MB) to `outputs/external/realwaste`, then run:
+
+```powershell
+.\.venv\Scripts\python.exe scripts/evaluate_external.py outputs/external/realwaste/realwaste-main/RealWaste
+```
+
+| Model | TrashNet test | RealWaste (95% CI) | Macro-F1 | Most predicted class |
+| --- | ---: | ---: | ---: | --- |
+| Baseline | 58.62% | 20.10% (18.8–21.4) | 0.157 | plastic, 42.0% |
+| Improved MLP | 85.68% | 23.03% (21.7–24.4) | 0.183 | paper, 52.4% |
+| MobileNetV3 | 94.69% | 43.99% (42.4–45.6) | 0.432 | metal, 30.7% |
+
+Chance is 16.7% and always answering plastic gives 25.7%. Both from-scratch MLPs stay close to chance. The improved model's calibrated threshold no longer separates right from wrong: it keeps 66.3% of the images, and only 22.7% of those are correct. `scripts/report_figures.py --external outputs/external-evaluation.json` draws the confusion matrices and sample grid.
+
 UI regression checks (the inference tests require the installed checkpoints):
 
 ```powershell

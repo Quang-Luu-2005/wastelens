@@ -7,6 +7,7 @@ Inputs are existing results only (no training or inference):
 - outputs/app-model-comparison.json from scripts/evaluate_app_models.py
 - reports/filter-robustness-20261119/results.json from scripts/filter_experiment.py
 - optionally a training history.csv for the baseline learning curve
+- optionally outputs/external-evaluation.json from scripts/evaluate_external.py (RealWaste)
 
     .venv\\Scripts\\python.exe scripts/report_figures.py --output ../doc/figures
 """
@@ -42,6 +43,27 @@ def confusion_figure(matrix: np.ndarray, classes: list[str], title: str, path: P
     ax.set_yticks(range(len(classes)), labels)
     ax.set(xlabel="Lớp dự đoán", ylabel="Lớp thật", title=title)
     fig.savefig(path, dpi=170)
+    plt.close(fig)
+
+
+def confusion_row(models: dict, classes: list[str], path: Path):
+    """The three models' confusion matrices side by side, sharing one colour scale (recall per row)."""
+    fig, axes = plt.subplots(1, len(models), figsize=(5.0 * len(models), 5.0), layout="constrained")
+    labels = [VI[name] for name in classes]
+    for ax, (key, model) in zip(axes, models.items()):
+        matrix = np.array(model["confusion_matrix"])
+        share = matrix / matrix.sum(1, keepdims=True)
+        ax.imshow(share, cmap="Blues", vmin=0, vmax=1)
+        for row in range(len(classes)):
+            for column in range(len(classes)):
+                ax.text(column, row, matrix[row, column], ha="center", va="center", fontsize=12,
+                        color="white" if share[row, column] > 0.55 else "black")
+        ax.set_xticks(range(len(classes)), labels, rotation=35, ha="right", fontsize=11)
+        ax.set_yticks(range(len(classes)), labels if ax is axes[0] else [], fontsize=11)
+        ax.set_title(f"{NAMES[key]}: {model['accuracy']:.2%}", fontsize=13)
+        ax.set_xlabel("Lớp dự đoán", fontsize=11)
+    axes[0].set_ylabel("Lớp thật", fontsize=11)
+    fig.savefig(path, dpi=150)
     plt.close(fig)
 
 
@@ -131,6 +153,30 @@ def learning_curve(history: Path, best_epoch: int | None, path: Path):
     plt.close(fig)
 
 
+def external_samples(external: dict, path: Path, seed: int = 3):
+    """One random external image per class with the three models' predictions (correct ones in green)."""
+    folder, classes, models = Path(external["folder"]), external["classes"], external["models"]
+    rng = np.random.default_rng(seed)
+    fig, axes = plt.subplots(1, len(classes), figsize=(2.6 * len(classes), 3.7))
+    # Manual margins: the prediction lines sit below the axes, where constrained layout does not look.
+    fig.subplots_adjust(left=0.005, right=0.995, top=0.9, bottom=0.25, wspace=0.04)
+    for ax, name in zip(axes, classes):
+        indices = [i for i, r in enumerate(models["baseline"]["predictions"]) if r["target"] == name]
+        index = int(rng.choice(indices))
+        relative = models["baseline"]["predictions"][index]["path"]
+        with Image.open(folder / relative) as image:
+            ax.imshow(image.convert("RGB"))
+        ax.set_title(f"Thật: {VI[name]}", fontsize=11, fontweight="bold")
+        for line, key in enumerate(NAMES):
+            record = models[key]["predictions"][index]
+            ax.text(0.0, -0.06 - 0.1 * line, f"{NAMES[key].split()[0]}: {VI[record['prediction']]}", fontsize=10,
+                    transform=ax.transAxes, va="top",
+                    color="#2e7d32" if record["prediction"] == name else "#c62828")
+        ax.axis("off")
+    fig.savefig(path, dpi=130)
+    plt.close(fig)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--output", type=Path, required=True)
@@ -138,6 +184,7 @@ def main():
     parser.add_argument("--robustness", type=Path, default=ROOT / "reports/filter-robustness-20261119/results.json")
     parser.add_argument("--history", type=Path, help="baseline history.csv for the learning curve")
     parser.add_argument("--best-epoch", type=int)
+    parser.add_argument("--external", type=Path, help="outputs/external-evaluation.json from evaluate_external.py")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
 
@@ -149,13 +196,24 @@ def main():
     errors = baseline_errors(models["baseline"], classes, args.output / "baseline-errors.png")
     confidence_figure(models, ["baseline"], args.output / "confidence-baseline.png")
     confidence_figure(models, ["baseline", "improved"], args.output / "confidence-scratch.png")
+    confidence_figure(models, list(NAMES), args.output / "confidence-all.png")
+    confusion_row(models, classes, args.output / "cm-all.png")
 
     rows = json.loads(args.robustness.read_text(encoding="utf-8"))["rows"]
     severity_figure(rows, ["baseline"], args.output / "severity-baseline.png")
     severity_figure(rows, ["baseline", "improved"], args.output / "severity-scratch.png")
     severity_figure(rows, ["improved", "mobilenet"], args.output / "severity-pretrained.png")
+    severity_figure(rows, list(NAMES), args.output / "severity-all.png")
     if args.history:
         learning_curve(args.history, args.best_epoch, args.output / "baseline-learning-curve.png")
+    if args.external:
+        external = json.loads(args.external.read_text(encoding="utf-8"))
+        for key in external["models"]:
+            model = external["models"][key]
+            confusion_figure(np.array(model["confusion_matrix"]), external["classes"],
+                             f"{NAMES[key]} trên RealWaste: {model['accuracy']:.2%}",
+                             args.output / f"external-cm-{key}.png")
+        external_samples(external, args.output / "external-samples.png")
     print(f"baseline errors: {errors}")
 
 
