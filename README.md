@@ -2,6 +2,20 @@
 
 WasteLens is a six-class waste classification project for Digital Image & Video Processing Lab03. It extends the Horse or Human MLP from Lab02 through from-scratch experiments. The app offers the adapted baseline, the improved MLP ensemble and an ImageNet-pretrained MobileNetV3 Large fine-tuned for comparison.
 
+Demo video (Vietnamese narration): https://youtu.be/clorjpeSl80
+
+## Demo video
+
+The demo is recorded by a script, not by hand. [`scripts/record_demo.py`](scripts/record_demo.py) drives the running app in headless Chrome through every feature (image mode, Module 1, three-model comparison, export, video, per-object detection, webcam with a fake camera). It captures frames through the DevTools screencast, draws a cursor and one caption per scene, and builds an H.264 MP4. The narration in [`scripts/demo_narration.json`](scripts/demo_narration.json) is synthesized with Edge TTS, and each scene lasts at least as long as its line:
+
+```powershell
+python scripts/record_demo.py voice outputs/demo-voice
+python scripts/record_demo.py record outputs/demo-frames --voice outputs/demo-voice
+.\.venv\Scripts\python.exe scripts/record_demo.py assemble outputs/demo-frames outputs/wastelens-demo.mp4 --voice outputs/demo-voice
+```
+
+The first two steps need `playwright` and `edge-tts` (for example in a separate virtual environment) and the app running on port 8501. Create the fake webcam clip first with `scripts/make_fake_camera.py`.
+
 ## Quick start (Windows)
 
 You need Python 3.12 and an internet connection for the first run. Copy the three model files (`wastelens-baseline.pt`, `wastelens-ensemble.pt`, `wastelens-mobilenetv3.pt`) from the project's Google Drive folder into `models\`. Then run from this folder, in Command Prompt or PowerShell:

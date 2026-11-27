@@ -1,0 +1,22 @@
+{
+  "voice": "vi-VN-HoaiMyNeural",
+  "rate": "+0%",
+  "lines": {
+    "intro": "Xin chào. Đây là video demo của WasteLens, hệ thống phân loại rác sáu lớp trên bộ dữ liệu TrashNet, thực hiện cho Lab 03 môn Xử lý ảnh và video số.",
+    "image": "Đầu tiên là chế độ ảnh. Người dùng có thể tải ảnh lên, hoặc chọn một ảnh trong tập Test. Ở đây chọn ảnh một chai nhựa.",
+    "classify": "Bấm Phân loại, Module 2 trả về nhãn Top 1 là Nhựa, kèm độ tin cậy, thời gian xử lý và xác suất của cả sáu lớp. Vì ảnh lấy từ tập Test, ứng dụng hiện thêm nhãn thật để đối chiếu.",
+    "models": "Ứng dụng có ba mô hình để chọn: baseline nâng cấp từ Lab 02, MLP cải tiến là mô hình mặc định, và MobileNetV3 đã được huấn luyện trước trên ImageNet.",
+    "module1": "Tiếp theo là Module 1, gồm các phép xử lý ảnh bằng OpenCV. Có bốn mức xử lý để chọn nhanh, ở đây chọn mức Mạnh.",
+    "compare": "Chế độ So sánh đặt ảnh gốc cạnh ảnh sau xử lý. Sau khi xử lý, mô hình vẫn đoán đúng là Nhựa, nhưng độ tin cậy giảm xuống.",
+    "custom": "Người dùng cũng có thể chỉnh từng tham số bằng thanh trượt, gồm biến đổi màu, biến đổi hình học, làm mượt, và thêm nhiễu để thử độ bền của mô hình.",
+    "three": "Khi bật so sánh ba mô hình, cả ba cùng chạy trên một ảnh sau xử lý, và kết quả được đối chiếu với nhãn thật.",
+    "export": "Kết quả có thể tải về: ảnh có chú thích nhãn, ảnh sau xử lý, và file JSON ghi lại tham số cùng xác suất.",
+    "video": "Chuyển sang chế độ video. Ở đây dùng một video mẫu ghép từ sáu ảnh Test. Cứ vài khung hình, mô hình phân loại một lần, và xác suất được làm mượt theo thời gian để nhãn không bị nhấp nháy.",
+    "chart": "Biểu đồ cho thấy xác suất của sáu lớp theo thời gian. Video có nhãn, file CSV và ảnh chụp một khung hình đều tải về được.",
+    "detect": "Với video quay ngoài đời có nhiều vật, ứng dụng có chế độ phát hiện từng vật. Bộ phát hiện SSDLite tìm vị trí từng lon, bộ theo dõi giữ mã số của từng vật, rồi mỗi vùng cắt được phân loại riêng.",
+    "tracks": "Bảng này liệt kê các vật được theo dõi, cùng nhãn rác chiếm ưu thế và thời điểm xuất hiện. Ở các khung chỉ chứa một vài lon, MobileNetV3 nhận đúng là kim loại.",
+    "webcam": "Cuối cùng là chế độ webcam thời gian thực. Ở đây dùng camera giả lập phát một ảnh Test. Ở mỗi khung hình, hệ thống phát hiện vật, theo dõi, và phân loại từng vật.",
+    "probs": "Nhấp vào khung của một vật để xem bảng xác suất sáu lớp của vật đó.",
+    "outro": "Cảm ơn thầy cô đã theo dõi. Mã nguồn và báo cáo chi tiết có trong bài nộp."
+  }
+}
